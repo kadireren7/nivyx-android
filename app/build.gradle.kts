@@ -92,6 +92,8 @@ android {
         disable += setOf("GradleDependency", "AndroidGradlePluginVersion", "NewerVersionAvailable")
         // x86_64 is part of nivyx.abis by default; lint cannot evaluate the property-driven filter.
         disable += "ChromeOsAbiSupport"
+        // targetSdk is a deliberate, reviewed choice (36); newer SDK images must not break the build.
+        disable += "OldTargetApi"
     }
 }
 

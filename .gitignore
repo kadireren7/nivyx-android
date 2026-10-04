@@ -16,3 +16,4 @@ captures/
 fuzz/target/
 fuzz/corpus/
 fuzz/artifacts/
+dist/
