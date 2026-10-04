@@ -1,0 +1,19 @@
+[package]
+name = "nivyx-jni"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "JNI bridge between the Nivyx Android app and the Rust engine."
+
+[lib]
+name = "nivyx_jni"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+nivyx-core = { path = "../nivyx-core" }
+nivyx-engine = { path = "../nivyx-engine" }
+jni = "=0.21.1"
+log = "0.4"
+serde_json = "1"

@@ -1,0 +1,20 @@
+[workspace]
+resolver = "2"
+members = ["crates/nivyx-core", "crates/nivyx-engine", "crates/nivyx-jni"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Kadir Eren Altintas"]
+repository = "https://github.com/kadireren7/nivyx-android"
+rust-version = "1.85"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = "symbols"
+
+[profile.dev]
+panic = "unwind"

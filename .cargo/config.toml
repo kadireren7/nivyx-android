@@ -1,0 +1,5 @@
+# Android 15+ devices may use 16 KiB memory pages; native libraries must be aligned accordingly.
+[target.aarch64-linux-android]
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]
+[target.x86_64-linux-android]
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]
