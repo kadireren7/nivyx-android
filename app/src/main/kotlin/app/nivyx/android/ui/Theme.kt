@@ -7,37 +7,37 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
-val NivyxCyan = Color(0xFF22D3EE)
-private val Ink = Color(0xFF0B0F14)
-private val Panel = Color(0xFF121923)
-private val PanelHigh = Color(0xFF1A2431)
+val NivyxEmerald = Color(0xFF10B981)
+private val Ink = Color(0xFF06120E)
+private val Panel = Color(0xFF0C1C16)
+private val PanelHigh = Color(0xFF14281F)
 
 private val DarkColors = darkColorScheme(
-    primary = NivyxCyan,
+    primary = Color(0xFF34D399),
     onPrimary = Ink,
-    secondary = Color(0xFF67E8F9),
+    secondary = Color(0xFF6EE7B7),
     background = Ink,
-    onBackground = Color(0xFFE6EEF5),
+    onBackground = Color(0xFFE6F3EC),
     surface = Panel,
-    onSurface = Color(0xFFE6EEF5),
+    onSurface = Color(0xFFE6F3EC),
     surfaceVariant = PanelHigh,
-    onSurfaceVariant = Color(0xFF9FB1C2),
+    onSurfaceVariant = Color(0xFF9DB8AB),
     error = Color(0xFFFF8A80),
-    outline = Color(0xFF2A394A),
+    outline = Color(0xFF1F3A2E),
 )
 
 private val LightColors = lightColorScheme(
-    primary = Color(0xFF0E7490),
+    primary = Color(0xFF047857),
     onPrimary = Color.White,
-    secondary = Color(0xFF0891B2),
-    background = Color(0xFFF5F8FA),
+    secondary = Color(0xFF0D9488),
+    background = Color(0xFFF4FAF7),
     onBackground = Color(0xFF0B1620),
     surface = Color.White,
     onSurface = Color(0xFF0B1620),
-    surfaceVariant = Color(0xFFE6EEF3),
-    onSurfaceVariant = Color(0xFF475B6D),
+    surfaceVariant = Color(0xFFE2F1EA),
+    onSurfaceVariant = Color(0xFF456356),
     error = Color(0xFFB3261E),
-    outline = Color(0xFFC3D0DA),
+    outline = Color(0xFFBFD6CA),
 )
 
 @Composable

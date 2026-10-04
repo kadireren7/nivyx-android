@@ -1,56 +1,83 @@
-# Nivyx Android
+<p align="center">
+  <img src="assets/logo-android.svg" alt="Nivyx Android" height="64">
+</p>
 
-**System-wide local DPI bypass for Android. No remote VPN server.**
+<h3 align="center">Your phone. Your IP. No middleman. Just unblocked.</h3>
 
-> **Status: v0.9.0-rc1 release candidate.** Built and tested on a Linux host. It has **not** been tested on a physical
-> Android device or emulator yet, so it is not 1.0. See [docs/device-test-plan.md](docs/device-test-plan.md).
+<p align="center">
+  System-wide local DPI bypass for Android. <b>No remote VPN server.</b><br>
+  Part of the <a href="https://github.com/kadireren7/nivyx">Nivyx</a> family.
+</p>
 
-## What it is
-Nivyx receives your phone's traffic locally and, when a site is blocked by deep-packet inspection, re-sends the TLS
-ClientHello split into two TLS records so the blocker cannot read the host name. Everything else goes out unchanged.
+<p align="center">
+  <a href="https://github.com/kadireren7/nivyx-android/releases"><img alt="release" src="https://img.shields.io/github/v/release/kadireren7/nivyx-android?include_prereleases&color=10b981"></a>
+  <img alt="license" src="https://img.shields.io/badge/license-MIT-0d9488">
+  <img alt="min sdk" src="https://img.shields.io/badge/Android-5.0%2B-6ee7b7">
+</p>
 
-* **Android shows a VPN key icon** because Nivyx uses `VpnService` for local traffic interception. **No remote VPN
-  server is used.** Traffic is not tunneled anywhere; your **public IP does not change**.
-* **HTTPS is not decrypted** and **no certificate is installed.**
-* **No telemetry, analytics, crash reporting, ads, accounts or Nivyx servers.** Network requests: DNS-over-HTTPS to the
-  resolver you choose, and a GitHub Releases check only when you tap *Check for updates*.
+---
+
+> **Honest status — v0.9.0-rc1.** Built and tested on Linux. **Not yet run on a physical phone**, so it is not 1.0.
+> The real-device checklist is in [docs/device-test-plan.md](docs/device-test-plan.md).
+
+## What it does
+
+Censors read the host name in the first packet of an HTTPS connection. Nivyx quietly splits that packet so they can't.
+Everything else is left alone.
 
 ```
-Apps → VpnService (local TUN) → Rust engine → protected direct sockets → Internet
-                                 ├ DoH DNS   ├ per-host strategy (direct / tls-record-split)   └ QUIC fallback
+App ─► local TUN ─► Nivyx engine (Rust) ─► your own connection ─► Internet
+                      ├─ encrypted DNS (DoH)
+                      ├─ per-host strategy: direct, or TLS record split
+                      └─ QUIC fallback for hosts that need it
 ```
 
-## Features
-Encrypted DNS with failover and fail-open to system DNS · automatic, explainable per-host/per-network strategy
-learning with TTLs · manual rules (`example.com = direct|tlsrec|tlsrec-tcp`, `*.` wildcards) · QUIC fallback scoped to
-affected hosts · network-change recovery · per-app exclusion · diagnostics (DNS poisoning check, HTTPS per strategy) ·
-redacted support export · user-initiated, SHA-256-verified updates.
+## The deal
+
+| | |
+|---|---|
+| **Remote VPN server** | None. Traffic never leaves through us. |
+| **Your public IP** | Unchanged. |
+| **HTTPS** | Never decrypted. No certificate installed. |
+| **Telemetry, analytics, ads, accounts** | None. Not one byte. |
+| **If Nivyx breaks** | Fails open. The VPN interface closes first, your internet comes back. |
+| **That VPN key icon** | Android shows it because Nivyx uses `VpnService` to catch traffic *locally*. That's all. |
+
+## Why it's light
+
+Built for old and low-end phones, not just flagships.
+
+* Packet path is native Rust. Kotlin never touches a packet.
+* Event-driven, no polling. Measured idle: **3.9 MB RAM, 3 threads, ~0 CPU** (host numbers, see [performance](docs/performance.md)).
+* Every cache and queue is bounded; 10,000 connections leave nothing behind.
+* Whole APK is about **8 MB** with three ABIs.
 
 ## Install
-Download from [Releases](https://github.com/kadireren7/nivyx-android/releases). **An unsigned APK cannot be
-installed**: sign it first ([docs/release.md](docs/release.md)). Allow "install unknown apps" for your browser/files app.
-Supported: Android 5.0+ (minSdk 21), ABIs arm64-v8a, armeabi-v7a, x86_64. *Tested versions: none on a device yet.*
 
-## Usage
-Open Nivyx → **Start** → accept Android's VPN prompt. The home screen shows protection, network, DNS and counters.
-*Diagnostics* checks one domain. *Settings* has resolver, IPv6, QUIC, per-app exclusions, battery guidance, manual rules.
+Grab the APK from [Releases](https://github.com/kadireren7/nivyx-android/releases). Release candidates ship **unsigned**:
+sign it first ([docs/release.md](docs/release.md)), then allow "install unknown apps". Android 5.0+ · arm64-v8a · armeabi-v7a · x86_64.
 
-## Limitations
-ICMP/ping is not forwarded · after a client closes its side the connection closes both ways (no TCP half-close) ·
-apps with their own DoH/strict Private DNS resolve outside Nivyx · IPv6 is tunneled only when the network has it ·
-Always-on VPN with "block without VPN" overrides Nivyx's fail-open · real-network effectiveness depends on your ISP's
-DPI and is unverified here.
+## Use it
 
-## Performance
-Idle 3.9 MB RSS, 3 threads, 0 CPU (host measurement). Details and caveats: [docs/performance.md](docs/performance.md).
+Open Nivyx → **Start** → accept Android's VPN prompt. Done.
+*Diagnostics* tells you exactly what's going on with any domain. *Settings* has resolver, IPv6, QUIC, per-app
+exclusions and manual rules (`example.com = tlsrec`).
 
-## Development
+## Limits, stated plainly
+
+* No ping (ICMP isn't forwarded).
+* Apps with their own DoH or strict Private DNS resolve outside Nivyx.
+* Android's *Always-on VPN + block without VPN* overrides fail-open.
+* Whether it beats **your** ISP's DPI is unproven until it runs on a real network.
+
+## Build
+
 ```
-cargo test --workspace                  # 100+ Rust tests incl. the local integration harness
-./gradlew testDebugUnitTest lintDebug   # needs JDK 17, Android SDK 36, NDK 27.2, cargo-ndk, rustup android targets
+cargo test --workspace                 # 100+ Rust tests incl. a local fake-DPI harness
+./gradlew testDebugUnitTest lintDebug  # JDK 17, Android SDK 36, NDK 27.2, cargo-ndk
 ./gradlew assembleRelease
 ```
-Docs: [architecture](docs/architecture.md) · [performance](docs/performance.md) · [security](docs/security.md) ·
-[third-party](docs/third-party.md) · [release](docs/release.md).
 
-MIT © Kadir Eren Altintas
+[architecture](docs/architecture.md) · [performance](docs/performance.md) · [security](docs/security.md) · [third-party](docs/third-party.md) · [release](docs/release.md)
+
+<p align="center"><sub>MIT © Kadir Eren Altintas</sub></p>

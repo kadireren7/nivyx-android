@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Nivyx Android">
+  <rect width="64" height="64" rx="14" fill="#06120e"/>
+  <!-- incoming path -->
+  <path d="M10 32 L24 32" stroke="#6ee7b7" stroke-width="3" stroke-linecap="round"/>
+  <!-- prism / split point -->
+  <path d="M24 20 L38 32 L24 44 Z" fill="#10b981"/>
+  <!-- three refracted paths -->
+  <path d="M38 32 L54 16" stroke="#10b981" stroke-width="3" stroke-linecap="round"/>
+  <path d="M38 32 L56 32" stroke="#6ee7b7" stroke-width="3" stroke-linecap="round"/>
+  <path d="M38 32 L54 48" stroke="#0d9488" stroke-width="3" stroke-linecap="round"/>
+</svg>
