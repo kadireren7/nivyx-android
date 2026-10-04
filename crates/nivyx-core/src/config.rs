@@ -70,7 +70,7 @@ impl Default for Config {
             tls_ports: vec![443],
             first_byte_timeout_ms: 3000,
             connect_timeout_ms: 8000,
-            max_flows: 2048,
+            max_flows: 1024,
             dns_cache_entries: 512,
             salt: String::new(),
             network_id: 0,

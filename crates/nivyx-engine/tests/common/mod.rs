@@ -310,9 +310,9 @@ pub async fn fake_doh(pki: &Pki, name: &str, answers: Vec<(&'static str, Vec<IpA
                         None => dns::build_empty_response(&body, 1).unwrap_or_default(),
                     };
                     let head = format!("HTTP/1.1 200 OK\r\nContent-Type: application/dns-message\r\nContent-Length: {}\r\n\r\n", resp.len());
-                    if tls.write_all(head.as_bytes()).await.is_err()
-                        || tls.write_all(&resp).await.is_err()
-                    {
+                    let mut out = head.into_bytes();
+                    out.extend_from_slice(&resp);
+                    if tls.write_all(&out).await.is_err() {
                         return;
                     }
                 }

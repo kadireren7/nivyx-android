@@ -18,6 +18,8 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 const FIRST_FLIGHT_WAIT: Duration = Duration::from_secs(10);
+/// Per-direction relay buffer. Idle flows pay for this twice, so it is kept small (measured in docs/performance.md).
+const RELAY_BUF: usize = 4096;
 
 pub async fn handle_tcp<S>(sh: Arc<Shared>, mut app: S, dst: SocketAddr)
 where
@@ -215,7 +217,7 @@ async fn attempt(up: &mut TcpStream, chunks: &[Vec<u8>], wait: Duration) -> Atte
             return Attempt::Failed(e);
         }
     }
-    let mut b = vec![0u8; 16 * 1024];
+    let mut b = vec![0u8; RELAY_BUF];
     match tokio::time::timeout(wait, up.read(&mut b)).await {
         Ok(Ok(0)) => Attempt::Failed(io::Error::new(
             io::ErrorKind::UnexpectedEof,
@@ -259,7 +261,9 @@ where
     A: AsyncRead + AsyncWrite + Unpin,
     B: AsyncRead + AsyncWrite + Unpin,
 {
-    if let Ok((up, down)) = tokio::io::copy_bidirectional(a, b).await {
+    if let Ok((up, down)) =
+        tokio::io::copy_bidirectional_with_sizes(a, b, RELAY_BUF, RELAY_BUF).await
+    {
         add(&sh.stats.bytes_up, up);
         add(&sh.stats.bytes_down, down);
     }

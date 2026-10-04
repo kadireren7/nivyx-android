@@ -240,8 +240,6 @@ dependencies = [
 [[package]]
 name = "ipstack"
 version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e889a45c1ce3e97268ad2249951528563ec1d02a120fecbd4db690beac34f7fd"
 dependencies = [
  "ahash",
  "etherparse",
@@ -339,7 +337,7 @@ dependencies = [
 
 [[package]]
 name = "nivyx-core"
-version = "0.1.0"
+version = "0.9.0-rc1"
 dependencies = [
  "proptest",
  "serde",
@@ -349,7 +347,7 @@ dependencies = [
 
 [[package]]
 name = "nivyx-engine"
-version = "0.1.0"
+version = "0.9.0-rc1"
 dependencies = [
  "etherparse",
  "ipstack",
@@ -368,7 +366,7 @@ dependencies = [
 
 [[package]]
 name = "nivyx-jni"
-version = "0.1.0"
+version = "0.9.0-rc1"
 dependencies = [
  "jni",
  "log",

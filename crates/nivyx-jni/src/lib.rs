@@ -98,6 +98,9 @@ pub extern "system" fn Java_app_nivyx_android_core_NivyxNative_start(
     _c: JClass,
     tun_fd: jint,
     config: JString,
+    network_id: jlong,
+    has_ipv6: jboolean,
+    dns_csv: JString,
     service: JObject,
 ) -> jlong {
     logger::init();
@@ -105,18 +108,27 @@ pub extern "system" fn Java_app_nivyx_android_core_NivyxNative_start(
         set_error("config unreadable or too large");
         return 0;
     };
+    let dns_csv = read_string(&mut env, &dns_csv).unwrap_or_default();
     let (Ok(vm), Ok(service)) = (env.get_java_vm(), env.new_global_ref(&service)) else {
         set_error("cannot capture JVM/service reference");
         return 0;
     };
     guarded(0, || {
-        let cfg = match Config::from_json(&cfg_json) {
+        let mut cfg = match Config::from_json(&cfg_json) {
             Ok(c) => c,
             Err(e) => {
                 set_error(e);
                 return 0;
             }
         };
+        // Network identity is applied before the first packet is processed (no race with flows).
+        cfg.network_id = network_id as u64;
+        cfg.has_ipv6 = has_ipv6 != 0;
+        cfg.system_dns = dns_csv
+            .split(',')
+            .filter_map(|s| s.trim().parse().ok())
+            .take(8)
+            .collect();
         if tun_fd < 0 {
             set_error("invalid TUN descriptor");
             return 0;
@@ -327,15 +339,17 @@ pub extern "system" fn Java_app_nivyx_android_core_NivyxNative_fingerprint(
     _c: JClass,
     salt: JString,
     transport: JString,
-    ssid: JString,
     gateway: JString,
+    subnet: JString,
+    dns: JString,
     carrier: JString,
 ) -> jlong {
-    let (Some(salt), Some(t), Some(s), Some(g), Some(c)) = (
+    let (Some(salt), Some(t), Some(g), Some(s), Some(d), Some(c)) = (
         read_string(&mut env, &salt),
         read_string(&mut env, &transport),
-        read_string(&mut env, &ssid),
         read_string(&mut env, &gateway),
+        read_string(&mut env, &subnet),
+        read_string(&mut env, &dns),
         read_string(&mut env, &carrier),
     ) else {
         return 0;
@@ -343,10 +357,11 @@ pub extern "system" fn Java_app_nivyx_android_core_NivyxNative_fingerprint(
     guarded(0, || {
         let info = NetworkInfo {
             transport: &t,
-            ssid: &s,
             gateway: &g,
+            subnet: &s,
+            dns: &d,
             carrier: &c,
-            has_ipv6: false,
+            ..Default::default()
         };
         fingerprint(salt.as_bytes(), &info) as jlong
     })

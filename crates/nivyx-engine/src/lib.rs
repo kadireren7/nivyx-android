@@ -52,6 +52,8 @@ pub struct Shared {
     pub tls: Arc<rustls::ClientConfig>,
     pub dns_health: DnsHealth,
     pub ipv6_active: AtomicBool,
+    /// False once the packet loop has ended (the watchdog uses this to fail open).
+    pub alive: AtomicBool,
     /// Seconds added to the wall clock (tests advance time with this).
     pub clock_offset: AtomicU64,
     pub started: Instant,
@@ -85,6 +87,7 @@ impl Shared {
             stats,
             dns_health: DnsHealth::default(),
             ipv6_active: AtomicBool::new(ipv6),
+            alive: AtomicBool::new(true),
             clock_offset: AtomicU64::new(0),
             started: Instant::now(),
         })
@@ -158,13 +161,32 @@ impl Engine {
         let stats = Arc::new(Stats::default());
         let connector: Arc<dyn Connector> =
             Arc::new(ProtectedConnector::new(protector, stats.clone()));
-        let dev = tun::TunDevice::from_dup(tun_fd)?;
-        Engine::start_with(dev, cfg, stats, connector, doh::tls_config())
+        // The device registers with the reactor, so it must be created inside the runtime context.
+        Engine::start_with_factory(
+            move || tun::TunDevice::from_dup(tun_fd),
+            cfg,
+            stats,
+            connector,
+            doh::tls_config(),
+        )
     }
 
     /// Start on any packet device (the integration harness uses an in-memory one).
     pub fn start_with<D>(
         device: D,
+        cfg: Config,
+        stats: Arc<Stats>,
+        connector: Arc<dyn Connector>,
+        tls: Arc<rustls::ClientConfig>,
+    ) -> io::Result<Engine>
+    where
+        D: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
+        Engine::start_with_factory(move || Ok(device), cfg, stats, connector, tls)
+    }
+
+    pub fn start_with_factory<D>(
+        make_device: impl FnOnce() -> io::Result<D>,
         mut cfg: Config,
         stats: Arc<Stats>,
         connector: Arc<dyn Connector>,
@@ -181,6 +203,10 @@ impl Engine {
             .thread_name("nivyx-rt")
             .enable_all()
             .build()?;
+        let device = {
+            let _enter = rt.enter();
+            make_device()?
+        };
         let shared = Shared::new(cfg, stats, connector, tls);
         let shutdown = Arc::new(Notify::new());
 
@@ -206,6 +232,7 @@ impl Engine {
                     }
                 }
             }
+            sh.alive.store(false, Relaxed);
             log::info!("accept loop ended");
         });
         Ok(Engine {
@@ -237,6 +264,7 @@ impl Engine {
             },
             "strategy_summary": summary,
             "ipv6_active": sh.ipv6_active.load(Relaxed),
+            "alive": sh.alive.load(Relaxed),
         })
         .to_string()
     }

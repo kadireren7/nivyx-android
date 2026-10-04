@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/nivyx-core", "crates/nivyx-engine", "crates/nivyx-jni"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.9.0-rc1"
 edition = "2021"
 license = "MIT"
 authors = ["Kadir Eren Altintas"]
@@ -18,3 +18,7 @@ strip = "symbols"
 
 [profile.dev]
 panic = "unwind"
+
+# Vendored ipstack with a small EOF/wakeup fix; see third_party/ipstack/NIVYX-PATCHES.md
+[patch.crates-io]
+ipstack = { path = "third_party/ipstack" }
