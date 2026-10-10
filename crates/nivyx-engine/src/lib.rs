@@ -151,6 +151,8 @@ pub fn ipv6_wanted(cfg: &Config) -> bool {
 /// A running engine instance.
 pub struct Engine {
     rt: Option<Runtime>,
+    /// Drops our hold on the TUN immediately at stop, whatever the runtime teardown does.
+    release_tun: Option<Box<dyn Fn() + Send + Sync>>,
     pub shared: Arc<Shared>,
     shutdown: Arc<Notify>,
 }
@@ -162,13 +164,25 @@ impl Engine {
         let connector: Arc<dyn Connector> =
             Arc::new(ProtectedConnector::new(protector, stats.clone()));
         // The device registers with the reactor, so it must be created inside the runtime context.
-        Engine::start_with_factory(
-            move || tun::TunDevice::from_dup(tun_fd),
+        let slot: Arc<Mutex<Option<tun::TunReleaser>>> = Arc::new(Mutex::new(None));
+        let slot_in = slot.clone();
+        let mut engine = Engine::start_with_factory(
+            move || {
+                let dev = tun::TunDevice::from_dup(tun_fd)?;
+                *slot_in.lock().unwrap_or_else(|e| e.into_inner()) = Some(dev.releaser());
+                Ok(dev)
+            },
             cfg,
             stats,
             connector,
             doh::tls_config(),
-        )
+        )?;
+        engine.release_tun = Some(Box::new(move || {
+            if let Some(r) = slot.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+                r.release();
+            }
+        }));
+        Ok(engine)
     }
 
     /// Start on any packet device (the integration harness uses an in-memory one).
@@ -237,6 +251,7 @@ impl Engine {
         });
         Ok(Engine {
             rt: Some(rt),
+            release_tun: None,
             shared,
             shutdown,
         })
@@ -339,6 +354,9 @@ impl Engine {
     pub fn stop(&mut self) {
         self.shutdown.notify_waiters();
         self.shutdown.notify_one();
+        if let Some(release) = self.release_tun.take() {
+            release();
+        }
         if let Some(rt) = self.rt.take() {
             rt.shutdown_timeout(Duration::from_secs(2));
         }

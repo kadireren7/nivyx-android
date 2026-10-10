@@ -12,6 +12,9 @@ for whether that exact binary was re-tested on a device.
 - [x] Clean install of the signed APK, one Android 16 tablet (rc1 build). Not yet: (also on an Android 5–7 and a 2 GB RAM device if available)
 - [x] Start → Android VPN consent dialog → service starts (rc1, tablet). Notification and key icon were not separately recorded
 - [x] Discord became reachable on a network where it was blocked (rc1, tablet). App vs. web not separately recorded
+- [ ] v1.0.1: tap Start/Stop very rapidly (20+ taps, also from the notification Stop); final state matches the last tap and ordinary internet works with Nivyx off
+- [ ] v1.0.1: normal Start works; normal Stop restores direct internet at once
+- [ ] v1.0.1: Discord works while Nivyx is active
 - [ ] A site known to be blocked on your network opens; Diagnostics shows `direct` failing and `tlsrec` working
 - [ ] Ordinary HTTPS sites work and are *not* fragmented (Diagnostics: direct OK)
 - [ ] Wi-Fi; mobile data

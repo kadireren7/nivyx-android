@@ -17,6 +17,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -24,6 +25,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
@@ -36,7 +40,13 @@ import app.nivyx.android.core.EngineStats
 
 @Composable
 fun HomeScreen(summary: HomeSummary, stats: EngineStats?, onToggle: () -> Unit) {
-    val ring = if (summary.active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+    val scheme = MaterialTheme.colorScheme
+    val ringBrush = when {
+        summary.active -> Brush.sweepGradient(listOf(NivyxMint, NivyxEmerald, NivyxTeal, NivyxMint))
+        summary.transitioning -> SolidColor(scheme.tertiary)
+        else -> SolidColor(scheme.outline)
+    }
+    val glow = if (summary.active) scheme.primary.copy(alpha = 0.10f) else Color.Transparent
     Column(
         Modifier
             .fillMaxSize()
@@ -55,8 +65,9 @@ fun HomeScreen(summary: HomeSummary, stats: EngineStats?, onToggle: () -> Unit) 
         ) {
             Canvas(Modifier.fillMaxSize()) {
                 val stroke = 10.dp.toPx()
+                drawCircle(color = glow, radius = size.minDimension / 2 - stroke)
                 drawArc(
-                    color = ring,
+                    brush = ringBrush,
                     startAngle = -90f,
                     sweepAngle = 360f,
                     useCenter = false,
@@ -71,7 +82,11 @@ fun HomeScreen(summary: HomeSummary, stats: EngineStats?, onToggle: () -> Unit) 
                     summary.protectionLabel,
                     fontSize = 26.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = if (summary.active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                    color = when {
+                        summary.active -> scheme.primary
+                        summary.transitioning -> scheme.tertiary
+                        else -> scheme.onSurface
+                    },
                     modifier = Modifier.testTag("protection_state"),
                 )
             }
@@ -84,16 +99,18 @@ fun HomeScreen(summary: HomeSummary, stats: EngineStats?, onToggle: () -> Unit) 
         }
 
         Spacer(Modifier.height(16.dp))
-        Button(
-            onClick = onToggle,
-            enabled = summary.buttonEnabled,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(56.dp)
-                .testTag("toggle"),
-            shape = RoundedCornerShape(16.dp),
-        ) {
-            Text(summary.buttonLabel, fontSize = 18.sp)
+        val toggleModifier = Modifier
+            .fillMaxWidth()
+            .height(56.dp)
+            .testTag("toggle")
+        val toggleLabel: @Composable () -> Unit = { Text(summary.buttonLabel, fontSize = 18.sp) }
+        if (summary.active) {
+            // While protected the primary action is the calmer one; the green fill is for Start.
+            FilledTonalButton(onClick = onToggle, enabled = summary.buttonEnabled, modifier = toggleModifier, shape = RoundedCornerShape(16.dp)) {
+                toggleLabel()
+            }
+        } else {
+            Button(onClick = onToggle, enabled = summary.buttonEnabled, modifier = toggleModifier, shape = RoundedCornerShape(16.dp)) { toggleLabel() }
         }
         summary.error?.let {
             Spacer(Modifier.height(8.dp))

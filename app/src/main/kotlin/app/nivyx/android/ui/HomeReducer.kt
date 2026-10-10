@@ -16,6 +16,8 @@ data class HomeSummary(
     val buttonLabel: String,
     val buttonEnabled: Boolean,
     val error: String?,
+    /** Starting or stopping: the ring shows a calmer teal instead of the active green. */
+    val transitioning: Boolean = false,
 )
 
 object HomeReducer {
@@ -57,6 +59,7 @@ object HomeReducer {
             },
             buttonEnabled = status !is VpnStatus.Starting && status !is VpnStatus.Stopping,
             error = (status as? VpnStatus.Error)?.message,
+            transitioning = status is VpnStatus.Starting || status is VpnStatus.Stopping,
         )
     }
 

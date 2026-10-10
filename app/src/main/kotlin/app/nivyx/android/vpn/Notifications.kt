@@ -15,6 +15,7 @@ import app.nivyx.android.R
 object Notifications {
     const val CHANNEL_ID = "protection"
     const val NOTIFICATION_ID = 1
+    private const val BRAND_COLOR = 0xFF10B981.toInt()
 
     fun ensureChannel(context: Context) {
         if (Build.VERSION.SDK_INT < 26) return // channels do not exist before Android 8
@@ -45,6 +46,7 @@ object Notifications {
         )
         return NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_nivyx)
+            .setColor(BRAND_COLOR)
             .setContentTitle("Nivyx")
             .setContentText(text)
             .setOngoing(true)

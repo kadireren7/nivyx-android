@@ -6,6 +6,8 @@ import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.net.VpnService
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.util.Log
@@ -16,13 +18,11 @@ import app.nivyx.android.MainActivity
 import app.nivyx.android.core.EngineStats
 import app.nivyx.android.core.NivyxNative
 import app.nivyx.android.core.RouteCalculator
-import app.nivyx.android.core.VpnStatus
 import app.nivyx.android.learned.LearnedStore
 import app.nivyx.android.settings.ConfigBuilder
 import app.nivyx.android.settings.Ipv6Setting
 import app.nivyx.android.settings.Settings
 import app.nivyx.android.settings.SettingsRepository
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -32,27 +32,34 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Local VPN service. It exists only to obtain a TUN interface for system-wide interception;
  * traffic leaves the device directly through sockets that are excluded from the VPN via `protect()`.
  *
+ * Every start/stop/restart is only recorded as intent here; [VpnLifecycle] executes the transitions one at a time,
+ * so no sequence of commands can produce two engines, two TUNs, or a TUN without an engine.
+ *
  * Fail-open ordering: whenever anything goes wrong, the TUN is closed *first* so traffic immediately
  * returns to the normal network, and only then is the engine stopped.
  */
 class NivyxVpnService : VpnService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val lock = Mutex()
+    private val main = Handler(Looper.getMainLooper())
     private lateinit var repo: SettingsRepository
     private lateinit var learned: LearnedStore
     private lateinit var monitor: NetworkMonitor
+    private lateinit var lifecycle: VpnLifecycle
 
     @Volatile private var tun: ParcelFileDescriptor? = null
 
     @Volatile private var handle = 0L
+
+    @Volatile private var lastStartId = 0
+
+    @Volatile private var userStopRecorded = false
     private var salt = ""
     private var startedWithV6 = false
     private var lastSnapshot: NetworkSnapshot? = null
@@ -65,33 +72,46 @@ class NivyxVpnService : VpnService() {
         learned = LearnedStore(this)
         monitor = NetworkMonitor(this) { salt }
         Notifications.ensureChannel(this)
+        lifecycle = VpnLifecycle(
+            scope = scope,
+            backend = Backend(),
+            publish = VpnStateHolder::set,
+            clock = SystemClock::elapsedRealtime,
+            onSettled = ::onSettled,
+            onClosed = { scope.cancel() },
+        )
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        lastStartId = startId
         if (intent?.action == ACTION_STOP) {
-            scope.launch { shutdown(userRequested = true) }
+            userStopRecorded = true
+            lifecycle.requestStop()
+            return START_NOT_STICKY
+        }
+        if (intent?.action == ACTION_RESTART) {
+            lifecycle.requestRestart()
             return START_NOT_STICKY
         }
         // ACTION_START, a null intent (OS restart after process death) and always-on VPN all land here.
         if (!enterForeground()) {
-            stopSelf()
+            lifecycle.abort("Android did not allow Nivyx to start in the background. Open the app and tap Start.")
             return START_NOT_STICKY
         }
-        scope.launch { bringUp() }
+        userStopRecorded = false
+        lifecycle.requestStart()
         return START_STICKY
     }
 
     override fun onRevoke() {
         // The user switched VPN off in system settings, or another VPN took over.
-        scope.launch { shutdown(userRequested = true) }
+        userStopRecorded = true
+        lifecycle.requestStop()
     }
 
     override fun onDestroy() {
-        // Synchronous best-effort teardown; never leave a TUN open behind a dead service.
-        closeTunAndEngine(export = false)
-        VpnStateHolder.set(VpnStatus.Stopped)
-        monitor.stop()
-        scope.cancel()
+        // Settle at STOPPED (releasing TUN + engine) on the worker, behind any in-flight transition.
+        lifecycle.close()
         super.onDestroy()
     }
 
@@ -101,61 +121,66 @@ class NivyxVpnService : VpnService() {
         true
     } catch (e: Exception) {
         Log.w(TAG, "cannot enter foreground: ${e.javaClass.simpleName}")
-        VpnStateHolder.set(VpnStatus.Error("Android did not allow Nivyx to start in the background. Open the app and tap Start."))
         false
     }
 
-    // ---------------------------------------------------------------------------------------- bring up
-
-    private suspend fun bringUp() {
-        lock.withLock {
-            if (handle != 0L) return // duplicate start: already running
-            VpnStateHolder.set(VpnStatus.Starting)
-            try {
-                establishLocked()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                fail(e.message ?: e.javaClass.simpleName)
+    /** Runs on the lifecycle worker after every settled pass, so persistence cannot interleave with a later start. */
+    private suspend fun onSettled(wantRunning: Boolean) {
+        if (wantRunning) return
+        if (userStopRecorded) repo.update { it.copy(desiredActive = false) }
+        main.post {
+            // A START that arrived meanwhile wins; stopSelf(id) is also a no-op if a newer command was queued.
+            if (!lifecycle.wantsRunning) {
+                ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+                stopSelf(lastStartId)
             }
         }
     }
 
-    private suspend fun establishLocked() {
-        val settings = repo.current()
-        salt = repo.salt()
-        NivyxNative.setDebug(settings.debugLogs)
-        monitor.start()
-        val snapshot = withTimeoutOrNull(NETWORK_WAIT_MS) { monitor.snapshot.filterNotNull().first() }
-        lastSnapshot = snapshot
-        val v6 = when (settings.ipv6) {
-            Ipv6Setting.ON -> true
-            Ipv6Setting.OFF -> false
-            Ipv6Setting.AUTO -> snapshot?.hasIpv6 == true
+    // ------------------------------------------------------------------------------------ backend
+
+    private inner class Backend : VpnBackend {
+        override suspend fun establish(stillWanted: () -> Boolean): Boolean {
+            val settings = repo.current()
+            salt = repo.salt()
+            NivyxNative.setDebug(settings.debugLogs)
+            monitor.start()
+            val snapshot = withTimeoutOrNull(NETWORK_WAIT_MS) { monitor.snapshot.filterNotNull().first() }
+            if (!stillWanted()) return false
+            lastSnapshot = snapshot
+            val v6 = when (settings.ipv6) {
+                Ipv6Setting.ON -> true
+                Ipv6Setting.OFF -> false
+                Ipv6Setting.AUTO -> snapshot?.hasIpv6 == true
+            }
+            val pfd = buildInterface(settings, snapshot, v6) ?: error("Android refused to create the VPN interface (permission revoked?)")
+            tun = pfd // from here teardown owns it, whatever happens next
+            if (!stillWanted()) return false
+            val h = NivyxNative.start(
+                pfd.fd,
+                ConfigBuilder.build(settings, salt),
+                snapshot?.fingerprint ?: 0L,
+                snapshot?.hasIpv6 ?: false,
+                snapshot?.dnsCsv.orEmpty(),
+                this@NivyxVpnService,
+            )
+            if (h == 0L) error("Engine failed to start: " + NivyxNative.lastError())
+            handle = h
+            VpnStateHolder.handle = h
+            startedWithV6 = v6
+            learned.load()?.let { NivyxNative.importLearned(h, it) }
+            repo.update { it.copy(desiredActive = true) }
+            VpnStateHolder.setNetwork(snapshot)
+            Notifications.update(this@NivyxVpnService, "Protection active · traffic stays on this device")
+            startBackgroundJobs()
+            return true
         }
-        val pfd = buildInterface(settings, snapshot, v6) ?: error("Android refused to create the VPN interface (permission revoked?)")
-        val h = NivyxNative.start(
-            pfd.fd,
-            ConfigBuilder.build(settings, salt),
-            snapshot?.fingerprint ?: 0L,
-            snapshot?.hasIpv6 ?: false,
-            snapshot?.dnsCsv.orEmpty(),
-            this,
-        )
-        if (h == 0L) {
-            runCatching { pfd.close() }
-            error("Engine failed to start: " + NivyxNative.lastError())
+
+        override suspend fun teardown() = withContext(Dispatchers.IO) {
+            closeTunAndEngine()
+            monitor.stop()
+            VpnStateHolder.setNetwork(null)
         }
-        tun = pfd
-        handle = h
-        startedWithV6 = v6
-        VpnStateHolder.handle = h
-        learned.load()?.let { NivyxNative.importLearned(h, it) }
-        repo.update { it.copy(desiredActive = true) }
-        VpnStateHolder.set(VpnStatus.Running(SystemClock.elapsedRealtime()))
-        VpnStateHolder.setNetwork(snapshot)
-        Notifications.update(this, "Protection active · traffic stays on this device")
-        startBackgroundJobs()
     }
 
     private fun buildInterface(settings: Settings, snapshot: NetworkSnapshot?, ipv6: Boolean): ParcelFileDescriptor? {
@@ -205,7 +230,7 @@ class NivyxVpnService : VpnService() {
             val settings = repo.current()
             if (settings.ipv6 == Ipv6Setting.AUTO && latest.hasIpv6 != startedWithV6) {
                 Log.i(TAG, "IPv6 availability changed; re-establishing interface")
-                reestablish()
+                lifecycle.requestRestart()
             }
         }
     }
@@ -225,59 +250,29 @@ class NivyxVpnService : VpnService() {
         }
     }
 
-    private suspend fun onEngineDead() {
-        lock.withLock {
-            closeTunAndEngine(export = false)
-            val now = SystemClock.elapsedRealtime()
-            restartTimes.addLast(now)
-            while (restartTimes.isNotEmpty() && now - restartTimes.first() > RESTART_WINDOW_MS) restartTimes.removeFirst()
-            if (restartTimes.size > MAX_RESTARTS) {
-                fail("The Nivyx engine stopped repeatedly, so protection was turned off. Your normal connection is unaffected.")
-                return
-            }
-            VpnStateHolder.set(VpnStatus.Starting)
-            delay(RESTART_BACKOFF_MS)
-            try {
-                establishLocked()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                fail(e.message ?: e.javaClass.simpleName)
-            }
-        }
-    }
-
-    private suspend fun reestablish() {
-        lock.withLock {
-            if (handle == 0L) return
-            exportLearned()
-            closeTunAndEngine(export = false)
-            try {
-                establishLocked()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                fail(e.message ?: e.javaClass.simpleName)
-            }
+    private fun onEngineDead() {
+        val now = SystemClock.elapsedRealtime()
+        restartTimes.addLast(now)
+        while (restartTimes.isNotEmpty() && now - restartTimes.first() > RESTART_WINDOW_MS) restartTimes.removeFirst()
+        if (restartTimes.size > MAX_RESTARTS) {
+            lifecycle.abort("The Nivyx engine stopped repeatedly, so protection was turned off. Your normal connection is unaffected.")
+        } else {
+            lifecycle.requestRestart()
         }
     }
 
     private suspend fun persistLearnedPeriodically() {
         while (true) {
             delay(PERSIST_MS)
-            exportLearned()
+            val h = handle
+            if (h != 0L) learned.save(NivyxNative.exportLearned(h))
         }
-    }
-
-    private fun exportLearned() {
-        val h = handle
-        if (h != 0L) learned.save(NivyxNative.exportLearned(h))
     }
 
     // ------------------------------------------------------------------------------------ tear down
 
-    /** Fail-open order: release the TUN first so traffic is back on the real network at once. */
-    private fun closeTunAndEngine(export: Boolean) {
+    /** Fail-open order: release the TUN first so traffic is back on the real network at once. Idempotent. */
+    private fun closeTunAndEngine() {
         val pfd = tun
         val h = handle
         tun = null
@@ -287,37 +282,15 @@ class NivyxVpnService : VpnService() {
         jobs.clear()
         runCatching { pfd?.close() }
         if (h != 0L) {
-            if (export) runCatching { learned.save(NivyxNative.exportLearned(h)) }
+            runCatching { learned.save(NivyxNative.exportLearned(h)) }
             NivyxNative.stop(h)
         }
-    }
-
-    private suspend fun shutdown(userRequested: Boolean) {
-        lock.withLock {
-            VpnStateHolder.set(VpnStatus.Stopping)
-            closeTunAndEngine(export = true)
-            if (userRequested) repo.update { it.copy(desiredActive = false) }
-            monitor.stop()
-            VpnStateHolder.setNetwork(null)
-            VpnStateHolder.set(VpnStatus.Stopped)
-            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-            stopSelf()
-        }
-    }
-
-    private fun fail(message: String) {
-        Log.w(TAG, "protection stopped: $message")
-        closeTunAndEngine(export = false)
-        monitor.stop()
-        VpnStateHolder.setNetwork(null)
-        VpnStateHolder.set(VpnStatus.Error(message))
-        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-        stopSelf()
     }
 
     companion object {
         const val ACTION_START = "app.nivyx.android.action.START"
         const val ACTION_STOP = "app.nivyx.android.action.STOP"
+        const val ACTION_RESTART = "app.nivyx.android.action.RESTART"
         private const val TAG = "nivyx"
         private const val MTU = 1500
         private const val TUN_ADDRESS = "198.18.0.2"
@@ -333,6 +306,11 @@ class NivyxVpnService : VpnService() {
 
         fun start(context: Context) {
             ContextCompat.startForegroundService(context, Intent(context, NivyxVpnService::class.java).setAction(ACTION_START))
+        }
+
+        /** Re-creates the interface (route/app-exclusion changes). Ignored unless protection is wanted. */
+        fun restart(context: Context) {
+            context.startService(Intent(context, NivyxVpnService::class.java).setAction(ACTION_RESTART))
         }
 
         fun stop(context: Context) {

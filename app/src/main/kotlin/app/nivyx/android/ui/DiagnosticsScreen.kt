@@ -58,8 +58,21 @@ fun DiagnosticsScreen(state: DiagnosticsUi, onHost: (String) -> Unit, onRun: () 
         }
         if (state.report.isNotEmpty()) {
             Spacer(Modifier.height(12.dp))
-            SelectionContainer {
-                Text(state.report, fontFamily = FontFamily.Monospace, fontSize = 13.sp, modifier = Modifier.testTag("diag_report"))
+            androidx.compose.material3.Card(
+                Modifier.fillMaxWidth(),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+                colors = androidx.compose.material3.CardDefaults.cardColors(
+                    containerColor = androidx.compose.material3.MaterialTheme.colorScheme.surfaceVariant,
+                ),
+            ) {
+                SelectionContainer {
+                    Text(
+                        state.report,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(12.dp).testTag("diag_report"),
+                    )
+                }
             }
             Spacer(Modifier.height(8.dp))
             OutlinedButton(onClick = onCopy, modifier = Modifier.fillMaxWidth()) { Text("Copy diagnostics") }

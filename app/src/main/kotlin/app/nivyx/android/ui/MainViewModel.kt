@@ -150,13 +150,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Settings that change the VPN interface itself (routes, excluded apps) need a restart. */
     fun restartIfRunning() {
-        if (status.value is VpnStatus.Running) {
-            viewModelScope.launch {
-                stopService()
-                delay(800)
-                startService()
-            }
-        }
+        if (status.value is VpnStatus.Running) NivyxVpnService.restart(getApplication())
     }
 
     fun validateRules(text: String): List<String> = runCatching {
