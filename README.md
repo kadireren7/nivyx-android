@@ -17,8 +17,9 @@
 
 ---
 
-> **Testing status.** Physically validated on one Android tablet (Android 16) against a real blocked network, including
-> successful Discord access. This is one device and one network, not a compatibility guarantee.
+> **Testing status.** Version 1.0.1 was physically validated on an Android tablet and an Android phone against a real
+> blocked network, including Discord access, normal Start/Stop and rapid repeated Start/Stop. This covers those devices
+> and that network only, not a compatibility guarantee.
 > What was and was not tested: [docs/device-test-plan.md](docs/device-test-plan.md).
 
 ## What it does
