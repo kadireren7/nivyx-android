@@ -1,11 +1,17 @@
 # Physical device test plan
 
-Nothing below has been run. **Every box is unchecked until a person tests it on a real phone.**
+Boxes are checked only for what a person actually did on a real device. Everything else is **untested**.
 Record device, Android version, ABI, carrier/ISP and result for each line.
 
-- [ ] Clean install of the signed APK (also on an Android 5–7 and a 2 GB RAM device if available)
-- [ ] Start → Android VPN consent dialog → notification appears → key icon shown
-- [ ] Discord works (app + web)
+**Physical validation performed (v0.9.0-rc1 signed build, one Android 16 tablet, one network where Discord was blocked, Oct 2026):**
+installed the signed APK, launched it, completed the Android VPN consent flow, started the Nivyx service, ordinary
+internet stayed usable, and Discord became reachable while Nivyx was active. The tablet's ABI, the exact network/ISP
+and mobile-data behaviour were not recorded. The v1.0.0 binary is a separate build; see the v1.0.0 release notes
+for whether that exact binary was re-tested on a device.
+
+- [x] Clean install of the signed APK, one Android 16 tablet (rc1 build). Not yet: (also on an Android 5–7 and a 2 GB RAM device if available)
+- [x] Start → Android VPN consent dialog → service starts (rc1, tablet). Notification and key icon were not separately recorded
+- [x] Discord became reachable on a network where it was blocked (rc1, tablet). App vs. web not separately recorded
 - [ ] A site known to be blocked on your network opens; Diagnostics shows `direct` failing and `tlsrec` working
 - [ ] Ordinary HTTPS sites work and are *not* fragmented (Diagnostics: direct OK)
 - [ ] Wi-Fi; mobile data

@@ -337,7 +337,7 @@ dependencies = [
 
 [[package]]
 name = "nivyx-core"
-version = "0.9.0-rc1"
+version = "1.0.0"
 dependencies = [
  "proptest",
  "serde",
@@ -347,7 +347,7 @@ dependencies = [
 
 [[package]]
 name = "nivyx-engine"
-version = "0.9.0-rc1"
+version = "1.0.0"
 dependencies = [
  "etherparse",
  "ipstack",
@@ -366,7 +366,7 @@ dependencies = [
 
 [[package]]
 name = "nivyx-jni"
-version = "0.9.0-rc1"
+version = "1.0.0"
 dependencies = [
  "jni",
  "log",

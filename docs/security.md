@@ -1,4 +1,4 @@
-# Security review (self-audit, v0.9.0-rc1)
+# Security review (self-audit, v1.0.0)
 
 Not an independent audit. Findings and status:
 
@@ -14,4 +14,4 @@ Not an independent audit. Findings and status:
 | Android components | Exported: launcher activity; `VpnService` (guarded by signature-level `BIND_VPN_SERVICE`); `BOOT_COMPLETED` receiver (protected broadcast). Provider and everything else not exported. PendingIntents immutable. No deep links. |
 | Storage | `allowBackup=false`, backup/extraction rules exclude everything; learned cache holds salted host *hashes* only and is AES-GCM encrypted with an Android Keystore key (API 23+; nothing persisted below that). |
 | Privacy | No telemetry/analytics/crash SaaS; logs bounded and redacted; hostnames in debug logs only if explicitly enabled. |
-| Known gaps | No independent review; ipstack is a young third-party stack (patched copy vendored); `cargo-fuzz` not set up; `FOREGROUND_SERVICE_SYSTEM_EXEMPTED` behaviour on Android 14+ unverified on a device. |
+| Known gaps | No independent review; ipstack is a young third-party stack (patched copy vendored); `cargo-fuzz` not set up; `FOREGROUND_SERVICE_SYSTEM_EXEMPTED` behaviour was seen working on one physical Android 16 tablet (rc1 build) and an API 34 emulator install; other Android versions are untested. |

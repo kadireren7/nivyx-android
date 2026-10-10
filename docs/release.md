@@ -15,9 +15,11 @@ apksigner verify nivyx-android-vX.Y.Z.apk
 Keep the same key for every release: Android refuses updates signed with a different key.
 
 CI (`.github/workflows/release.yml`) signs only when the repository secrets `NIVYX_KEYSTORE_B64`,
-`NIVYX_KEYSTORE_PASSWORD`, `NIVYX_KEY_ALIAS` exist; otherwise it publishes the unsigned candidate.
+`NIVYX_KEYSTORE_PASSWORD`, `NIVYX_KEY_ALIAS` exist. For a stable tag (no `-`) it **fails** without them instead of
+publishing an unsigned APK, and it never overwrites a release that already exists: the canonical stable build is the
+one created and verified by hand from the tagged commit.
 Assets: `nivyx-android-vX.Y.Z.apk`, `SHA256SUMS`, `nivyx-android-vX.Y.Z.spdx.json`.
 Version source of truth: `nivyx.version` in `gradle.properties` and `[workspace.package]` in `Cargo.toml`.
 
 Supported: minSdk 21 (Android 5.0), targetSdk/compileSdk 36. ABIs: arm64-v8a, armeabi-v7a, x86_64.
-Tested Android versions: **none on a device** (see `device-test-plan.md`).
+Physically tested: one Android 16 tablet (rc1 build). Everything else is untested (see `device-test-plan.md`).

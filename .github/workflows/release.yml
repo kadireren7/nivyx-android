@@ -25,6 +25,10 @@ jobs:
           V="${GITHUB_REF_NAME#v}"
           grep -q "^nivyx.version=$V$" gradle.properties || { echo "tag $V != gradle.properties"; exit 1; }
       - run: cargo test --workspace --locked
+      - name: Stable tags must be signed
+        env: { KS: "${{ secrets.NIVYX_KEYSTORE_B64 }}" }
+        run: |
+          case "$GITHUB_REF_NAME" in *-*) ;; *) [ -n "$KS" ] || { echo "stable release requires signing secrets"; exit 1; };; esac
       - name: Decode signing key (only if configured)
         env: { KS: "${{ secrets.NIVYX_KEYSTORE_B64 }}" }
         run: |
@@ -47,7 +51,7 @@ jobs:
         run: |
           PRE=""; case "$GITHUB_REF_NAME" in *-*) PRE="--prerelease";; esac
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+            echo "Release $GITHUB_REF_NAME already exists; not overwriting its assets."
           else
             gh release create "$GITHUB_REF_NAME" dist/* $PRE --title "$GITHUB_REF_NAME" --notes-file RELEASE_NOTES.md
           fi

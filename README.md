@@ -17,8 +17,9 @@
 
 ---
 
-> **Honest status — v0.9.0-rc1.** Built and tested on Linux. **Not yet run on a physical phone**, so it is not 1.0.
-> The real-device checklist is in [docs/device-test-plan.md](docs/device-test-plan.md).
+> **Testing status.** Physically validated on one Android tablet (Android 16) against a real blocked network, including
+> successful Discord access. This is one device and one network, not a compatibility guarantee.
+> What was and was not tested: [docs/device-test-plan.md](docs/device-test-plan.md).
 
 ## What it does
 
@@ -54,8 +55,9 @@ Built for old and low-end phones, not just flagships.
 
 ## Install
 
-Grab the APK from [Releases](https://github.com/kadireren7/nivyx-android/releases). Release candidates ship **unsigned**:
-sign it first ([docs/release.md](docs/release.md)), then allow "install unknown apps". Android 5.0+ · arm64-v8a · armeabi-v7a · x86_64.
+Grab `nivyx-android-vX.Y.Z.apk` from [Releases](https://github.com/kadireren7/nivyx-android/releases), check it against
+`SHA256SUMS`, and allow "install unknown apps". Release APKs are signed ([docs/release.md](docs/release.md)).
+Android 5.0+ · arm64-v8a · armeabi-v7a · x86_64.
 
 ## Use it
 
@@ -68,7 +70,8 @@ exclusions and manual rules (`example.com = tlsrec`).
 * No ping (ICMP isn't forwarded).
 * Apps with their own DoH or strict Private DNS resolve outside Nivyx.
 * Android's *Always-on VPN + block without VPN* overrides fail-open.
-* Whether it beats **your** ISP's DPI is unproven until it runs on a real network.
+* Some OEM battery managers may stop long-running services; exempt Nivyx from battery optimisation if it does.
+* Results depend on the network and its DPI. Not every Android version, ABI or network has been physically tested.
 
 ## Build
 
