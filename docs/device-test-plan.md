@@ -11,7 +11,7 @@ and mobile-data behaviour were not recorded. The v1.0.1 signed release APK was v
 - [x] Clean install of the signed APK, one Android 16 tablet (rc1 build). Not yet: (also on an Android 5–7 and a 2 GB RAM device if available)
 - [x] Start → Android VPN consent dialog → service starts (rc1, tablet). Notification and key icon were not separately recorded
 - [x] Discord became reachable on a network where it was blocked (rc1, tablet). App vs. web not separately recorded
-- [ ] v1.0.2 / v1.0.3: not yet physically tested (video/download behaviour on a filtered network, Block all QUIC)
+- [ ] v1.0.2–v1.0.4: not yet physically tested (video/download behaviour on a filtered network, QUIC refused by default, simplified settings)
 - [x] v1.0.1 (signed release APK, one Android tablet and one Android phone): app installs and launches; the Android VPN permission/service path works
 - [x] v1.0.1 (tablet and phone): repeated rapid Start/Stop no longer leaves the device without internet
 - [x] v1.0.1 (tablet and phone): normal Start works; normal Stop restores direct internet

@@ -22,9 +22,11 @@ data class Settings(
     val customDohUrl: String = "",
     val customBootstrap: String = "",
     val ipv6: Ipv6Setting = Ipv6Setting.AUTO,
-    val quicFallback: Boolean = true,
-    val blockAllQuic: Boolean = false,
-    val tlsRecTcp: Boolean = false,
+    /**
+     * Off (default): QUIC is refused so every app uses TCP/TLS, where unblocking works. Videos and
+     * downloads then work without the user knowing what QUIC is. Advanced users can allow it.
+     */
+    val allowQuic: Boolean = false,
     val verboseHosts: Boolean = false,
     val debugLogs: Boolean = false,
     val manualRules: String = "",

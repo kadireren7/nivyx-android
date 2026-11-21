@@ -75,7 +75,9 @@ IPv6 is not tunneled so apps stay inside the tunnel.
 ## QUIC
 UDP/443 QUIC Initial packets are rejected only when a hostname that resolved to that exact IP within the last
 ≤5 minutes (or its domain, see family hint) currently needs bypass; apps then fall back to TCP/TLS. Everything else
-passes. The *Block all QUIC* setting rejects every QUIC Initial on any port.
+passes. The Android app sets `block_all_quic` by default (every QUIC Initial, any port, is rejected) because
+bypass only works over TCP/TLS; *Advanced settings → Allow QUIC* turns that off. `tlsrec-tcp` is always enabled by
+the app as the step after `tlsrec`.
 
 ## Routing, loops, per-app exclusion
 Routes = public IPv4 space minus RFC1918/CGNAT/link-local/loopback/multicast (51 CIDRs), plus `2000::/3` when IPv6

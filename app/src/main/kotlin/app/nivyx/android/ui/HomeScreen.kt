@@ -124,8 +124,8 @@ fun HomeScreen(summary: HomeSummary, stats: EngineStats?, onToggle: () -> Unit) 
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         ) {
             Text(
-                "Android labels this connection as a VPN because Nivyx uses VpnService for local traffic interception. " +
-                    "No remote VPN server is used: your public IP does not change and nothing is decrypted.",
+                "Android shows a VPN key icon, but your traffic does not go to any server of ours. " +
+                    "Everything stays on your phone and your own internet connection.",
                 modifier = Modifier.padding(16.dp),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -140,14 +140,10 @@ fun HomeScreen(summary: HomeSummary, stats: EngineStats?, onToggle: () -> Unit) 
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             ) {
                 Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                    LabeledRow("Uptime", HomeReducer.formatUptime(stats.uptimeSeconds))
-                    LabeledRow("Active strategies", stats.activeStrategies.toString())
+                    LabeledRow("Running for", HomeReducer.formatUptime(stats.uptimeSeconds))
                     LabeledRow("Connections", stats.connectionsTotal.toString())
-                    LabeledRow("Bypassed connections", stats.connectionsBypassed.toString())
-                    LabeledRow("Failures", stats.connectionsFailed.toString())
-                    LabeledRow("Open flows", stats.flowsActive.toString())
-                    LabeledRow("DNS queries / failures", "${stats.dnsQueries} / ${stats.dnsFailures}")
-                    LabeledRow("IPv6", if (stats.ipv6Active) "tunneled" else "not tunneled")
+                    LabeledRow("Unblocked connections", stats.connectionsBypassed.toString())
+                    LabeledRow("Failed connections", stats.connectionsFailed.toString())
                 }
             }
         }

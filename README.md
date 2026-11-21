@@ -63,8 +63,9 @@ Android 5.0+ · arm64-v8a · armeabi-v7a · x86_64.
 ## Use it
 
 Open Nivyx → **Start** → accept Android's VPN prompt. Done.
-*Diagnostics* tells you exactly what's going on with any domain. *Settings* has resolver, IPv6, QUIC, per-app
-exclusions and manual rules (`example.com = tlsrec`).
+Nothing to configure: Nivyx picks how to open each site by itself. *Diagnostics* checks a single site. *Settings*
+has start options and apps to skip; DNS, IPv6, QUIC and manual rules (`example.com = tlsrec`) are under
+*Show advanced settings*.
 
 ## Limits, stated plainly
 

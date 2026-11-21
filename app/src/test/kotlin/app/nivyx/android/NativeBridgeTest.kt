@@ -54,7 +54,7 @@ class NativeBridgeTest {
                 customBootstrap = "192.0.2.1",
                 ipv6 = Ipv6Setting.OFF,
                 manualRules = "x.example = direct",
-                tlsRecTcp = true,
+                allowQuic = true,
             )
             assertEquals("choice $choice", "", NivyxNative.validateConfig(ConfigBuilder.build(settings, "salt")))
         }

@@ -29,9 +29,10 @@ class SettingsRepository(context: Context) {
         val customUrl = stringPreferencesKey("custom_doh_url")
         val customBootstrap = stringPreferencesKey("custom_bootstrap")
         val ipv6 = stringPreferencesKey("ipv6")
-        val quic = booleanPreferencesKey("quic_fallback")
-        val blockAllQuic = booleanPreferencesKey("block_all_quic")
-        val tlsRecTcp = booleanPreferencesKey("tlsrec_tcp")
+
+        // New key on purpose: earlier QUIC switches ("quic_fallback", "block_all_quic") are ignored,
+        // so everyone gets the working default after updating.
+        val allowQuic = booleanPreferencesKey("allow_quic")
         val verboseHosts = booleanPreferencesKey("verbose_hosts")
         val debug = booleanPreferencesKey("debug_logs")
         val rules = stringPreferencesKey("manual_rules")
@@ -55,9 +56,7 @@ class SettingsRepository(context: Context) {
             prefs[Keys.customUrl] = next.customDohUrl
             prefs[Keys.customBootstrap] = next.customBootstrap
             prefs[Keys.ipv6] = next.ipv6.name
-            prefs[Keys.quic] = next.quicFallback
-            prefs[Keys.blockAllQuic] = next.blockAllQuic
-            prefs[Keys.tlsRecTcp] = next.tlsRecTcp
+            prefs[Keys.allowQuic] = next.allowQuic
             prefs[Keys.verboseHosts] = next.verboseHosts
             prefs[Keys.debug] = next.debugLogs
             prefs[Keys.rules] = next.manualRules
@@ -82,9 +81,7 @@ class SettingsRepository(context: Context) {
         customDohUrl = p[Keys.customUrl] ?: "",
         customBootstrap = p[Keys.customBootstrap] ?: "",
         ipv6 = enumOr(p[Keys.ipv6], Ipv6Setting.AUTO),
-        quicFallback = p[Keys.quic] ?: true,
-        blockAllQuic = p[Keys.blockAllQuic] ?: false,
-        tlsRecTcp = p[Keys.tlsRecTcp] ?: false,
+        allowQuic = p[Keys.allowQuic] ?: false,
         verboseHosts = p[Keys.verboseHosts] ?: false,
         debugLogs = p[Keys.debug] ?: false,
         manualRules = p[Keys.rules] ?: "",

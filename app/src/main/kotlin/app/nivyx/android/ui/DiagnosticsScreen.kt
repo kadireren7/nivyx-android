@@ -37,7 +37,7 @@ fun DiagnosticsScreen(state: DiagnosticsUi, onHost: (String) -> Unit, onRun: () 
         Text("Diagnostics", fontSize = 28.sp)
         Spacer(Modifier.height(4.dp))
         Text(
-            "Checks DNS, HTTPS reachability and the strategy Nivyx would use for one domain. Results stay on this device.",
+            "Type a site address to check whether it can be reached and how Nivyx opens it. Results stay on this phone.",
             style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
         )
         Spacer(Modifier.height(12.dp))

@@ -77,24 +77,24 @@ fun AboutScreen(
 
         SectionTitle("How it works")
         Text(
-            "Nivyx uses Android's VpnService only to receive your device's traffic locally. Connections leave your phone " +
-                "directly from your own network, so your public IP is unchanged. HTTPS is never decrypted and no certificate " +
-                "is installed. When a site is blocked by DPI, Nivyx re-sends the TLS ClientHello split into two records.",
+            "Many networks block sites by reading the site's name at the start of a connection. Nivyx sends that start in a " +
+                "slightly different shape, so the block doesn't recognise it, while the site itself works normally. " +
+                "Your connection still goes out through your own internet: no server of ours, your IP stays the same, " +
+                "and nothing you send is decrypted or read.",
             style = MaterialTheme.typography.bodyMedium,
         )
 
         SectionTitle("Privacy")
         Text(
-            "No telemetry, analytics, crash reporting, ads, accounts or Nivyx servers. The only network requests Nivyx makes " +
-                "are DNS-over-HTTPS to the resolver you chose and, if you tap the button, a GitHub Releases check.",
+            "No tracking, ads or accounts, and no Nivyx servers. Nivyx only looks up site names over an encrypted DNS service " +
+                "and, when you tap the button, checks GitHub for updates.",
             style = MaterialTheme.typography.bodyMedium,
         )
 
         SectionTitle("Limitations")
         Text(
-            "ICMP (ping) is not forwarded. Android shows the VPN key icon while Nivyx runs. Apps using their own " +
-                "DNS-over-HTTPS or private-DNS-strict mode resolve outside Nivyx. Results on a real censored network " +
-                "depend on that network's DPI.",
+            "Sites blocked by their IP address cannot be opened, because Nivyx has no server to go around the block. " +
+                "Results depend on how your network blocks sites. Ping does not work while Nivyx is on.",
             style = MaterialTheme.typography.bodyMedium,
         )
 

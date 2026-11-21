@@ -52,7 +52,7 @@ object SupportBundle {
             appendLine()
             appendLine("Config summary")
             appendLine("  resolver: ${s.resolver}")
-            appendLine("  ipv6: ${s.ipv6}, quic fallback: ${s.quicFallback}, block all quic: ${s.blockAllQuic}, tlsrec-tcp: ${s.tlsRecTcp}")
+            appendLine("  ipv6: ${s.ipv6}, allow quic: ${s.allowQuic}")
             appendLine("  manual rules: ${s.manualRules.lines().count { it.isNotBlank() && !it.trim().startsWith("#") }}")
             appendLine("  excluded apps: ${s.excludedPackages.size}")
             appendLine("  start on boot: ${s.startOnBoot}, auto-start: ${s.autoStartOnLaunch}")

@@ -62,40 +62,24 @@ fun SettingsScreen(
     ) {
         Text("Settings", fontSize = 28.sp)
 
+        Text(
+            "Nivyx works on its own. You don't need to change anything here.",
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+
         SectionTitle("General")
-        SwitchRow("Start when the app opens", "Only if Android VPN consent was already granted", settings.autoStartOnLaunch) { v ->
+        SwitchRow("Start when the app opens", "Turns on by itself when you open Nivyx", settings.autoStartOnLaunch) { v ->
             onChange { it.copy(autoStartOnLaunch = v) }
         }
-        SwitchRow("Start after reboot", "Requires the setting above to have been granted once", settings.startOnBoot) { v ->
+        SwitchRow("Start after reboot", "Turns on by itself when the phone restarts", settings.startOnBoot) { v ->
             onChange { it.copy(startOnBoot = v) }
         }
 
-        SectionTitle("DNS")
-        RadioGroup(ResolverChoice.entries.map { it to it.label }, settings.resolver) { choice ->
-            onChange { it.copy(resolver = choice) }
-        }
-        if (settings.resolver == ResolverChoice.CUSTOM) {
-            CustomResolver(settings, onChange, onValidateResolver)
-        }
-
-        SectionTitle("Network")
-        Text("IPv6", style = MaterialTheme.typography.labelMedium)
-        RadioGroup(Ipv6Setting.entries.map { it to it.label }, settings.ipv6) { v -> onChange { it.copy(ipv6 = v) } }
-        SwitchRow(
-            "QUIC fallback",
-            "For hosts that need bypass, reject QUIC so apps retry over TCP/TLS",
-            settings.quicFallback,
-        ) { v -> onChange { it.copy(quicFallback = v) } }
-        SwitchRow(
-            "Block all QUIC",
-            "Reject QUIC everywhere so every app uses TCP/TLS, where bypass works. Try this if videos stall or fail",
-            settings.blockAllQuic,
-        ) { v -> onChange { it.copy(blockAllQuic = v) } }
-
         SectionTitle("Apps")
         Text(
-            "Excluded apps bypass Nivyx completely (useful for banking apps that refuse VPN interfaces). " +
-                "Currently excluded: ${settings.excludedPackages.size}.",
+            "Choose apps that should skip Nivyx, for example a banking app that refuses to work while a VPN is on. " +
+                "Skipped apps: ${settings.excludedPackages.size}.",
             style = MaterialTheme.typography.bodySmall,
         )
         OutlinedButton(
@@ -104,19 +88,18 @@ fun SettingsScreen(
                 showApps = true
             },
             modifier = Modifier.padding(top = 8.dp),
-        ) { Text("Choose excluded apps") }
+        ) { Text("Choose apps to skip") }
 
         if (Build.VERSION.SDK_INT >= 23) {
             SectionTitle("Battery")
             Text(
-                "Nivyx is event-driven and does not poll in the background. If Android stops it while the screen is off, " +
-                    "you can allow it to run unrestricted. Nivyx never changes this silently.",
+                "If Nivyx turns off by itself while the screen is off, allow it to run without battery limits.",
                 style = MaterialTheme.typography.bodySmall,
             )
             val pm = androidx.core.content.ContextCompat.getSystemService(context, PowerManager::class.java)!!
             val ignoring = pm.isIgnoringBatteryOptimizations(context.packageName)
             Text(
-                if (ignoring) "Battery optimization: unrestricted" else "Battery optimization: active",
+                if (ignoring) "Battery limits: off" else "Battery limits: on",
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.padding(top = 4.dp),
             )
@@ -126,19 +109,48 @@ fun SettingsScreen(
             ) { Text("Open battery settings") }
         }
 
-        SectionTitle("Advanced")
-        Text("Manual rules override automatic learning.", style = MaterialTheme.typography.bodySmall)
-        RulesEditor(settings.manualRules, onValidateRules) { text -> onChange { it.copy(manualRules = text) } }
-        SwitchRow(
-            "tlsrec-tcp strategy (experimental)",
-            "Also send the split records in separate TCP segments",
-            settings.tlsRecTcp,
-        ) { v -> onChange { it.copy(tlsRecTcp = v) } }
-        SwitchRow("Host names in debug logs", "Off by default. Logs never contain URLs, cookies or tokens", settings.verboseHosts) { v ->
-            onChange { it.copy(verboseHosts = v) }
+        var showAdvanced by remember { mutableStateOf(false) }
+        TextButton(
+            onClick = { showAdvanced = !showAdvanced },
+            modifier = Modifier.padding(top = 16.dp).testTag("advanced_toggle"),
+        ) { Text(if (showAdvanced) "Hide advanced settings" else "Show advanced settings") }
+
+        if (showAdvanced) {
+            Text(
+                "For experienced users. The defaults are the best choice for almost everyone.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+
+            SectionTitle("DNS")
+            RadioGroup(ResolverChoice.entries.map { it to it.label }, settings.resolver) { choice ->
+                onChange { it.copy(resolver = choice) }
+            }
+            if (settings.resolver == ResolverChoice.CUSTOM) {
+                CustomResolver(settings, onChange, onValidateResolver)
+            }
+
+            SectionTitle("Network")
+            Text("IPv6", style = MaterialTheme.typography.labelMedium)
+            RadioGroup(Ipv6Setting.entries.map { it to it.label }, settings.ipv6) { v -> onChange { it.copy(ipv6 = v) } }
+            SwitchRow(
+                "Allow QUIC",
+                "Off works best on networks that block sites. Turn on only if a specific app needs it",
+                settings.allowQuic,
+            ) { v -> onChange { it.copy(allowQuic = v) } }
+
+            SectionTitle("Rules")
+            Text("Manual rules override automatic learning.", style = MaterialTheme.typography.bodySmall)
+            RulesEditor(settings.manualRules, onValidateRules) { text -> onChange { it.copy(manualRules = text) } }
+
+            SectionTitle("Troubleshooting")
+            SwitchRow("Host names in debug logs", "Off by default. Logs never contain URLs, cookies or tokens", settings.verboseHosts) { v ->
+                onChange { it.copy(verboseHosts = v) }
+            }
+            SwitchRow("Debug logging", "Kept on this phone only, last 400 lines", settings.debugLogs) { v ->
+                onChange { it.copy(debugLogs = v) }
+            }
+            OutlinedButton(onClick = onResetLearned, modifier = Modifier.padding(top = 8.dp)) { Text("Forget what Nivyx learned") }
         }
-        SwitchRow("Debug logging", "Local ring buffer only, 400 lines", settings.debugLogs) { v -> onChange { it.copy(debugLogs = v) } }
-        OutlinedButton(onClick = onResetLearned, modifier = Modifier.padding(top = 8.dp)) { Text("Reset learned strategies") }
         Spacer(Modifier.height(24.dp))
     }
 

@@ -169,7 +169,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val h = VpnStateHolder.handle
             if (h != 0L) NivyxNative.resetLearned(h)
             learned.clear()
-            _message.value = "Learned strategies cleared"
+            _message.value = "Nivyx will learn again from scratch"
         }
     }
 
