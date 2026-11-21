@@ -84,10 +84,14 @@ impl TunDevice {
         let owned = unsafe { OwnedFd::from_raw_fd(dup) };
         set_nonblocking(owned.as_raw_fd())?;
         let live = Arc::new(Mutex::new(Some(owned.as_raw_fd())));
-        Ok(TunDevice {
-            fd: AsyncFd::new(owned)?,
-            live,
-        })
+        // SAFETY: `owned` is a fresh, open descriptor that only this AsyncFd uses, and its number
+        // stays open until the AsyncFd is dropped. The one exception is `TunReleaser::release` at
+        // teardown, which dup2()s /dev/null over the same number: the number never closes or gets
+        // reused by another file, so deregistration at drop cannot touch someone else's
+        // registration; the kernel drops the epoll entry of the replaced TUN description by itself,
+        // and after release the device is only read to EOF or dropped.
+        let fd = unsafe { AsyncFd::register(owned) }.map_err(io::Error::from)?;
+        Ok(TunDevice { fd, live })
     }
 }
 
