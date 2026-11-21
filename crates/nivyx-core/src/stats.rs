@@ -22,6 +22,12 @@ pub struct Stats {
     pub bytes_up: AtomicU64,
     pub bytes_down: AtomicU64,
     pub protect_failures: AtomicU64,
+    /// Direct flows that froze or were reset early, after the handshake looked fine.
+    pub direct_stalls: AtomicU64,
+    /// Direct attempts whose first server bytes were not a TLS handshake (injected reply).
+    pub bogus_replies: AtomicU64,
+    /// DNS answers served from the network's resolver because every DoH resolver failed.
+    pub dns_fallback_answers: AtomicU64,
 }
 
 #[derive(Serialize, Debug, Clone, Default, PartialEq, Eq)]
@@ -43,6 +49,9 @@ pub struct StatsSnapshot {
     pub bytes_up: u64,
     pub bytes_down: u64,
     pub protect_failures: u64,
+    pub direct_stalls: u64,
+    pub bogus_replies: u64,
+    pub dns_fallback_answers: u64,
 }
 
 impl Stats {
@@ -65,6 +74,9 @@ impl Stats {
             bytes_up: self.bytes_up.load(Relaxed),
             bytes_down: self.bytes_down.load(Relaxed),
             protect_failures: self.protect_failures.load(Relaxed),
+            direct_stalls: self.direct_stalls.load(Relaxed),
+            bogus_replies: self.bogus_replies.load(Relaxed),
+            dns_fallback_answers: self.dns_fallback_answers.load(Relaxed),
         }
     }
 }

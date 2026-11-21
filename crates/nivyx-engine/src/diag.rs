@@ -92,24 +92,21 @@ pub async fn diagnose(sh: &Arc<Shared>, host_in: &str) -> Value {
     };
 
     let now = sh.now();
-    let key = Key::new(
-        &sh.salt(),
-        cfg.network_id,
-        target.map(|i| Family::of(&i)).unwrap_or(Family::V4),
-        &host,
-    );
+    let fam_v = target.map(|i| Family::of(&i)).unwrap_or(Family::V4);
+    let key = Key::new(&sh.salt(), cfg.network_id, fam_v, &host);
+    let family = Key::family(&sh.salt(), cfg.network_id, fam_v, &host);
     let manual = sh.rules().lookup(&host);
     let d = sh
         .strategy
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .decide(&key, manual, now);
+        .decide_scoped(&key, family.as_ref(), manual, now);
     json!({
         "host": host,
         "dns": { "doh": doh_res, "system": plain_res, "poisoning_suspected": poisoning },
         "https": https,
         "decision": {
-            "source": match d.source { Source::Manual => "manual", Source::Learned => "learned", Source::Default => "default" },
+            "source": match d.source { Source::Manual => "manual", Source::Learned => "learned", Source::Family => "family", Source::Default => "default" },
             "state": state_name(d.state),
             "ladder": d.ladder.iter().map(|s: &Strategy| s.name()).collect::<Vec<_>>(),
             "ttl_remaining_s": d.ttl_remaining,

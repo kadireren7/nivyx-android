@@ -30,6 +30,7 @@ class SettingsRepository(context: Context) {
         val customBootstrap = stringPreferencesKey("custom_bootstrap")
         val ipv6 = stringPreferencesKey("ipv6")
         val quic = booleanPreferencesKey("quic_fallback")
+        val blockAllQuic = booleanPreferencesKey("block_all_quic")
         val tlsRecTcp = booleanPreferencesKey("tlsrec_tcp")
         val verboseHosts = booleanPreferencesKey("verbose_hosts")
         val debug = booleanPreferencesKey("debug_logs")
@@ -55,6 +56,7 @@ class SettingsRepository(context: Context) {
             prefs[Keys.customBootstrap] = next.customBootstrap
             prefs[Keys.ipv6] = next.ipv6.name
             prefs[Keys.quic] = next.quicFallback
+            prefs[Keys.blockAllQuic] = next.blockAllQuic
             prefs[Keys.tlsRecTcp] = next.tlsRecTcp
             prefs[Keys.verboseHosts] = next.verboseHosts
             prefs[Keys.debug] = next.debugLogs
@@ -81,6 +83,7 @@ class SettingsRepository(context: Context) {
         customBootstrap = p[Keys.customBootstrap] ?: "",
         ipv6 = enumOr(p[Keys.ipv6], Ipv6Setting.AUTO),
         quicFallback = p[Keys.quic] ?: true,
+        blockAllQuic = p[Keys.blockAllQuic] ?: false,
         tlsRecTcp = p[Keys.tlsRecTcp] ?: false,
         verboseHosts = p[Keys.verboseHosts] ?: false,
         debugLogs = p[Keys.debug] ?: false,

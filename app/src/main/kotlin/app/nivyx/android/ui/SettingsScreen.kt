@@ -86,6 +86,11 @@ fun SettingsScreen(
             "For hosts that need bypass, reject QUIC so apps retry over TCP/TLS",
             settings.quicFallback,
         ) { v -> onChange { it.copy(quicFallback = v) } }
+        SwitchRow(
+            "Block all QUIC",
+            "Reject QUIC everywhere so every app uses TCP/TLS, where bypass works. Try this if videos stall or fail",
+            settings.blockAllQuic,
+        ) { v -> onChange { it.copy(blockAllQuic = v) } }
 
         SectionTitle("Apps")
         Text(

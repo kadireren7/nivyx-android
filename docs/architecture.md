@@ -45,8 +45,19 @@ Known ipstack limits: after the client's FIN, ipstack closes both directions (no
 Per `(network fingerprint, address family, salted host hash)` it keeps, per strategy (`direct`, `tlsrec`,
 `tlsrec-tcp`), a good/bad slot with TTL. Ladder = strategies not in a bad cooldown, known-good first, canonical
 order otherwise; if all are cooling down it fails open to `direct`. Manual rules always win; wildcard rules need an
-explicit `*.`; nothing is inherited across sibling hosts. Defaults: direct-good 1 h, direct-bad 30 min,
-tlsrec-good 6 h, tlsrec-bad 10 min. Bounded to 4096 scopes (configurable).
+explicit `*.`, and manual rules are never inherited across sibling hosts. Defaults: direct-good 1 h, direct-bad
+30 min, tlsrec-good 6 h, tlsrec-bad 10 min. Bounded to 4096 scopes (configurable).
+
+Family hint: when a host's direct attempt fails or a bypass succeeds, its registrable domain (last two labels, three
+under `com.tr`/`co.uk`-style suffixes; a heuristic, not the public-suffix list) is hinted for 1 h. A host with no
+learned data of its own under a hinted domain tries bypass first, with direct kept as the last resort, and counts as
+needing bypass for QUIC. This covers video CDNs that use a new host name per request.
+
+What counts as success: the first server bytes must be a TLS handshake record. A forged reply (block page, alert)
+escalates to the next strategy; on the last strategy it is handed to the app and nothing is learned. A direct flow
+whose server goes silent for 10 s after the app wrote, or is reset, before 64 KiB arrived is treated as DPI
+throttling: direct is marked bad for the host (and its domain), the connection itself is left alone, and the app's
+retry bypasses. The watcher only wakes after app writes; no polling.
 
 ## TLS record split
 The first client flight is parsed (partial segments, multi-record hellos, malformed input handled; 32 KiB cap).
@@ -57,12 +68,14 @@ The first client flight is parsed (partial segments, multi-record hellos, malfor
 All port-53 traffic entering the TUN is answered locally: DoH (Cloudflare, Google, Quad9 interleaved by default,
 custom URL supported), id zeroed on the wire, keep-alive pool, failover, 10–300 s bounded cache. Local names
 (`.local`, `.lan`, single label, private reverse zones) go to the network's own resolver. If every DoH resolver
-fails the system resolver answers (fail-open; also keeps captive portals working). AAAA is answered empty while
+fails the system resolver answers (fail-open; also keeps captive portals working). Such answers may be censored,
+so they are never cached and their TTLs are lowered to 10 s; the DoH answer is used as soon as DoH works again. AAAA is answered empty while
 IPv6 is not tunneled so apps stay inside the tunnel.
 
 ## QUIC
 UDP/443 QUIC Initial packets are rejected only when a hostname that resolved to that exact IP within the last
-≤5 minutes currently needs bypass; apps then fall back to TCP/TLS. Everything else passes.
+≤5 minutes (or its domain, see family hint) currently needs bypass; apps then fall back to TCP/TLS. Everything else
+passes. The *Block all QUIC* setting rejects every QUIC Initial on any port.
 
 ## Routing, loops, per-app exclusion
 Routes = public IPv4 space minus RFC1918/CGNAT/link-local/loopback/multicast (51 CIDRs), plus `2000::/3` when IPv6

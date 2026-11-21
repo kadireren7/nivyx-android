@@ -38,6 +38,9 @@ pub struct Config {
     pub ipv6: Ipv6Mode,
     /// Reject QUIC to destinations whose hosts need bypass, forcing TCP/TLS fallback.
     pub quic_fallback: bool,
+    /// Reject every QUIC Initial, whatever the destination. For networks that filter QUIC itself
+    /// or whose CDN hosts are not yet known to need bypass. Apps fall back to TCP/TLS.
+    pub block_all_quic: bool,
     /// Allow host names in logs and diagnostics (off by default).
     pub verbose_hosts: bool,
     /// TCP ports whose first client flight is inspected as TLS.
@@ -45,6 +48,9 @@ pub struct Config {
     /// How long to wait for the first server byte on a direct attempt before escalating.
     pub first_byte_timeout_ms: u64,
     pub connect_timeout_ms: u64,
+    /// A direct TLS flow whose server goes silent this long after the app wrote, before much data
+    /// arrived, is treated as throttled/frozen by DPI: direct is marked bad for the host.
+    pub stall_timeout_ms: u64,
     pub max_flows: usize,
     pub dns_cache_entries: usize,
     /// Per-install random salt (hex) used to hash host names and network identifiers.
@@ -66,10 +72,12 @@ impl Default for Config {
             manual_rules: String::new(),
             ipv6: Ipv6Mode::Auto,
             quic_fallback: true,
+            block_all_quic: false,
             verbose_hosts: false,
             tls_ports: vec![443],
             first_byte_timeout_ms: 3000,
             connect_timeout_ms: 8000,
+            stall_timeout_ms: 10_000,
             max_flows: 1024,
             dns_cache_entries: 512,
             salt: String::new(),
@@ -90,6 +98,10 @@ pub fn default_resolvers() -> Vec<Resolver> {
         r("Cloudflare", "https://1.1.1.1/dns-query"),
         r("Google", "https://8.8.8.8/dns-query"),
         r("Quad9", "https://9.9.9.9/dns-query"),
+        // Second addresses of the same providers, so blocking one IP never leaves only plain DNS.
+        r("Cloudflare", "https://1.0.0.1/dns-query"),
+        r("Google", "https://8.8.4.4/dns-query"),
+        r("Quad9", "https://149.112.112.112/dns-query"),
     ]
 }
 
@@ -177,6 +189,7 @@ impl Config {
         self.tls_ports.retain(|p| *p != 0);
         self.first_byte_timeout_ms = self.first_byte_timeout_ms.clamp(500, 15_000);
         self.connect_timeout_ms = self.connect_timeout_ms.clamp(1_000, 30_000);
+        self.stall_timeout_ms = self.stall_timeout_ms.clamp(1_000, 60_000);
         self.max_flows = self.max_flows.clamp(16, 8192);
         self.dns_cache_entries = self.dns_cache_entries.clamp(16, 4096);
         self.strategy.max_entries = self.strategy.max_entries.clamp(16, 16_384);
@@ -187,6 +200,7 @@ impl Config {
             &mut self.strategy.tlsrec_bad_ttl,
             &mut self.strategy.tlsrec_tcp_good_ttl,
             &mut self.strategy.tlsrec_tcp_bad_ttl,
+            &mut self.strategy.family_hint_ttl,
         ] {
             *ttl = (*ttl).clamp(30, 7 * 24 * 3600);
         }

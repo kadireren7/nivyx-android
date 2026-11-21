@@ -79,6 +79,43 @@ impl Key {
             host: hash_host(salt, host),
         }
     }
+
+    /// Scope shared by every host under the same registrable domain (see [`family_of`]).
+    /// Hashed with a distinct prefix so it never collides with the exact-host key of that domain.
+    pub fn family(salt: &[u8], network: u64, family: Family, host: &str) -> Option<Key> {
+        family_of(host).map(|f| Key::new(salt, network, family, &format!("family:{f}")))
+    }
+}
+
+/// Second-level labels that, under a two-letter country TLD, belong to the public suffix
+/// (`example.com.tr`, `example.co.uk`). A small heuristic, not a full public-suffix list.
+const CC_SECOND_LEVEL: &[&str] = &[
+    "ac", "biz", "co", "com", "edu", "gen", "gov", "info", "ltd", "me", "net", "nic", "or", "org",
+    "web",
+];
+
+/// The registrable domain of `host` (`rr3---sn-x.googlevideo.com` → `googlevideo.com`,
+/// `cdn.example.com.tr` → `example.com.tr`). `None` for IP literals and single-label names.
+pub fn family_of(host: &str) -> Option<String> {
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    if host.parse::<std::net::IpAddr>().is_ok() {
+        return None;
+    }
+    let labels: Vec<&str> = host.split('.').collect();
+    if labels.len() < 2 || labels.iter().any(|l| l.is_empty()) {
+        return None;
+    }
+    let tld = labels[labels.len() - 1];
+    let sld = labels[labels.len() - 2];
+    let take = if tld.len() == 2 && CC_SECOND_LEVEL.contains(&sld) {
+        3
+    } else {
+        2
+    };
+    if labels.len() < take {
+        return None;
+    }
+    Some(labels[labels.len() - take..].join("."))
 }
 
 /// Salted, truncated SHA-256 of a lower-cased host name (or IP literal).
@@ -107,6 +144,8 @@ pub enum State {
 pub enum Source {
     Manual,
     Learned,
+    /// No data for this exact host, but a sibling under the same registrable domain needed bypass.
+    Family,
     Default,
 }
 
@@ -124,6 +163,8 @@ pub struct Params {
     pub allow_tlsrec_tcp: bool,
     /// Hard cap on remembered scopes.
     pub max_entries: usize,
+    /// How long a sibling's need for bypass is applied to new hosts of the same domain.
+    pub family_hint_ttl: u64,
 }
 
 impl Default for Params {
@@ -137,6 +178,7 @@ impl Default for Params {
             tlsrec_tcp_bad_ttl: 10 * 60,
             allow_tlsrec_tcp: false,
             max_entries: 4096,
+            family_hint_ttl: 60 * 60,
         }
     }
 }
@@ -320,6 +362,8 @@ impl Decision {
 pub struct Engine {
     params: Params,
     entries: HashMap<Key, Entry>,
+    /// Registrable-domain scopes where some host recently needed bypass → hint expiry.
+    hints: HashMap<Key, u64>,
 }
 
 impl Engine {
@@ -327,6 +371,7 @@ impl Engine {
         Engine {
             params,
             entries: HashMap::new(),
+            hints: HashMap::new(),
         }
     }
 
@@ -393,6 +438,62 @@ impl Engine {
         }
     }
 
+    fn hint_live(&self, family: Option<&Key>, now: u64) -> bool {
+        family.is_some_and(|f| self.hints.get(f).is_some_and(|e| *e > now))
+    }
+
+    /// Like [`Engine::decide`], but a host with no learned data of its own inherits a live
+    /// family hint: bypass strategies are tried before plain direct, which stays as last resort.
+    pub fn decide_scoped(
+        &self,
+        key: &Key,
+        family: Option<&Key>,
+        manual: Option<Option<Strategy>>,
+        now: u64,
+    ) -> Decision {
+        let mut d = self.decide(key, manual, now);
+        if d.source == Source::Default && self.hint_live(family, now) {
+            // Stable sort: bypass strategies keep their canonical order, direct moves last.
+            d.ladder.sort_by_key(|s| *s == Strategy::Direct);
+            d.source = Source::Family;
+            d.ttl_remaining = family
+                .and_then(|f| self.hints.get(f))
+                .map_or(0, |e| e.saturating_sub(now));
+        }
+        d
+    }
+
+    /// Like [`Engine::report`], and also feeds the family hint: a direct failure or a bypass
+    /// success says "this domain is filtered", a direct success says nothing about siblings.
+    pub fn report_scoped(
+        &mut self,
+        key: Key,
+        family: Option<Key>,
+        strategy: Strategy,
+        success: bool,
+        now: u64,
+    ) {
+        self.report(key, strategy, success, now);
+        let filtered = (strategy == Strategy::Direct) != success;
+        if let (Some(f), true) = (family, filtered) {
+            if !self.hints.contains_key(&f) && self.hints.len() >= self.params.max_entries {
+                self.hints.retain(|_, e| *e > now);
+                if self.hints.len() >= self.params.max_entries {
+                    if let Some(victim) = self
+                        .hints
+                        .iter()
+                        .min_by_key(|(k, e)| (**e, k.host))
+                        .map(|(k, _)| *k)
+                    {
+                        self.hints.remove(&victim);
+                    }
+                }
+            }
+            self.hints
+                .insert(f, now.saturating_add(self.params.family_hint_ttl));
+        }
+    }
+
     /// Record the outcome of attempting `strategy`.
     pub fn report(&mut self, key: Key, strategy: Strategy, success: bool, now: u64) {
         let ttl = self.params.ttl(strategy, success);
@@ -416,6 +517,27 @@ impl Engine {
         }
     }
 
+    /// [`Engine::needs_bypass`] with the family hint applied to hosts that have no live data.
+    pub fn needs_bypass_scoped(
+        &self,
+        key: &Key,
+        family: Option<&Key>,
+        manual: Option<Option<Strategy>>,
+        now: u64,
+    ) -> bool {
+        if matches!(manual, Some(Some(_))) {
+            return self.needs_bypass(key, manual, now);
+        }
+        match self
+            .entries
+            .get(key)
+            .filter(|e| e.decided_at(now).is_some())
+        {
+            Some(e) => e.needs_bypass(now),
+            None => self.hint_live(family, now),
+        }
+    }
+
     fn evict(&mut self, now: u64) {
         self.entries.retain(|_, e| e.expires() > now);
         while self.entries.len() >= self.params.max_entries {
@@ -436,15 +558,18 @@ impl Engine {
     /// Drop expired entries. Cheap enough to call periodically.
     pub fn sweep(&mut self, now: u64) {
         self.entries.retain(|_, e| e.expires() > now);
+        self.hints.retain(|_, e| *e > now);
     }
 
     /// Forget everything learned for one network (e.g. its DNS or gateway changed).
     pub fn invalidate_network(&mut self, network: u64) {
         self.entries.retain(|k, _| k.network != network);
+        self.hints.retain(|k, _| k.network != network);
     }
 
     pub fn clear(&mut self) {
         self.entries.clear();
+        self.hints.clear();
     }
 
     /// Entries worth persisting: only scopes where plain direct is known not to work, still live.
@@ -498,6 +623,98 @@ mod tests {
     }
     fn eng() -> Engine {
         Engine::new(Params::default())
+    }
+
+    fn fam(host: &str) -> Option<Key> {
+        Key::family(SALT, 1, Family::V4, host)
+    }
+
+    #[test]
+    fn family_of_handles_cdn_hosts_cc_tlds_and_ips() {
+        assert_eq!(
+            family_of("rr3---sn-4g5e.googlevideo.com").as_deref(),
+            Some("googlevideo.com")
+        );
+        assert_eq!(
+            family_of("Video.CDN.Example.com.").as_deref(),
+            Some("example.com")
+        );
+        assert_eq!(
+            family_of("www.example.com.tr").as_deref(),
+            Some("example.com.tr")
+        );
+        assert_eq!(
+            family_of("a.b.example.co.uk").as_deref(),
+            Some("example.co.uk")
+        );
+        assert_eq!(family_of("example.de").as_deref(), Some("example.de"));
+        assert_eq!(family_of("com.tr"), None);
+        assert_eq!(family_of("localhost"), None);
+        assert_eq!(family_of("203.0.113.7"), None);
+        assert_eq!(family_of("2001:db8::1"), None);
+        // The family scope never collides with the exact scope of the domain itself.
+        assert_ne!(fam("example.com"), Some(key("example.com")));
+    }
+
+    #[test]
+    fn sibling_needing_bypass_puts_bypass_first_for_new_hosts_of_the_domain() {
+        let mut e = eng();
+        let a = "rr1---sn-a.videocdn.example";
+        let b = "rr7---sn-b.videocdn.example";
+        let d = e.decide_scoped(&key(b), fam(b).as_ref(), None, 100);
+        assert_eq!(d.source, Source::Default);
+        assert_eq!(d.primary(), Strategy::Direct);
+        assert!(!e.needs_bypass_scoped(&key(b), fam(b).as_ref(), None, 100));
+
+        e.report_scoped(key(a), fam(a), Strategy::Direct, false, 100);
+        let d = e.decide_scoped(&key(b), fam(b).as_ref(), None, 101);
+        assert_eq!(d.ladder, vec![Strategy::TlsRec, Strategy::Direct]);
+        assert_eq!(d.source, Source::Family);
+        assert!(e.needs_bypass_scoped(&key(b), fam(b).as_ref(), None, 101));
+
+        // The hint expires.
+        let p = Params::default();
+        let later = 100 + p.family_hint_ttl;
+        assert_eq!(
+            e.decide_scoped(&key(b), fam(b).as_ref(), None, later)
+                .source,
+            Source::Default
+        );
+        assert!(!e.needs_bypass_scoped(&key(b), fam(b).as_ref(), None, later));
+    }
+
+    #[test]
+    fn own_learned_data_and_manual_rules_beat_the_family_hint() {
+        let mut e = eng();
+        let a = "a.filtered.example";
+        let b = "b.filtered.example";
+        e.report_scoped(key(a), fam(a), Strategy::TlsRec, true, 100);
+        e.report_scoped(key(b), fam(b), Strategy::Direct, true, 100);
+        let d = e.decide_scoped(&key(b), fam(b).as_ref(), None, 101);
+        assert_eq!(d.source, Source::Learned);
+        assert_eq!(d.primary(), Strategy::Direct);
+        assert!(!e.needs_bypass_scoped(&key(b), fam(b).as_ref(), None, 101));
+        let m = Some(Some(Strategy::Direct));
+        let c = "c.filtered.example";
+        assert_eq!(
+            e.decide_scoped(&key(c), fam(c).as_ref(), m, 101).ladder,
+            vec![Strategy::Direct]
+        );
+        assert!(!e.needs_bypass_scoped(&key(c), fam(c).as_ref(), m, 101));
+        // A direct success alone never creates a hint.
+        let mut e2 = eng();
+        e2.report_scoped(key(a), fam(a), Strategy::Direct, true, 100);
+        assert_eq!(
+            e2.decide_scoped(&key(c), fam(c).as_ref(), None, 101).source,
+            Source::Default
+        );
+        e2.clear();
+        e2.report_scoped(key(a), fam(a), Strategy::Direct, false, 100);
+        e2.clear();
+        assert_eq!(
+            e2.decide_scoped(&key(c), fam(c).as_ref(), None, 101).source,
+            Source::Default
+        );
     }
 
     #[test]

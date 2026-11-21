@@ -11,11 +11,18 @@ use tokio::time::{sleep, Instant};
 
 const DGRAM_BUF: usize = 2048;
 
-/// True when QUIC to `dst` must be rejected so the app falls back to TCP/TLS: only if a host
-/// that *recently resolved to this exact address* is currently known to need bypass.
+/// True when QUIC to `dst` must be rejected so the app falls back to TCP/TLS: always when the user
+/// blocks all QUIC, otherwise only if a host that *recently resolved to this exact address* (or a
+/// sibling under the same registrable domain, for fresh CDN host names) is known to need bypass.
 pub fn should_reject_quic(sh: &Shared, dst: &SocketAddr, first_datagram: &[u8]) -> bool {
     let cfg = sh.cfg();
-    if !cfg.quic_fallback || dst.port() != 443 || !quic::is_quic_initial(first_datagram) {
+    if !quic::is_quic_initial(first_datagram) {
+        return false;
+    }
+    if cfg.block_all_quic {
+        return true;
+    }
+    if !cfg.quic_fallback || dst.port() != 443 {
         return false;
     }
     let now = sh.now();
@@ -29,10 +36,12 @@ pub fn should_reject_quic(sh: &Shared, dst: &SocketAddr, first_datagram: &[u8]) 
         .collect();
     let salt = sh.salt();
     let rules = sh.rules();
+    let fam_v = Family::of(&dst.ip());
     let eng = sh.strategy.lock().unwrap_or_else(|e| e.into_inner());
     hosts.iter().any(|h| {
-        let key = Key::new(&salt, cfg.network_id, Family::of(&dst.ip()), h);
-        eng.needs_bypass(&key, rules.lookup(h), now)
+        let key = Key::new(&salt, cfg.network_id, fam_v, h);
+        let family = Key::family(&salt, cfg.network_id, fam_v, h);
+        eng.needs_bypass_scoped(&key, family.as_ref(), rules.lookup(h), now)
     })
 }
 

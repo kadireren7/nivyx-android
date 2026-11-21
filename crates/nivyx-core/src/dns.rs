@@ -154,6 +154,48 @@ pub fn parse_answers(msg: &[u8]) -> Option<Answers> {
     Some(out)
 }
 
+/// Lower every resource-record TTL in a response to at most `max` seconds (EDNS OPT records,
+/// whose TTL field carries flags, are left alone). Used for answers from the network's own
+/// resolver, which may be censored: the OS and apps must not keep them for long.
+/// Returns false (and may leave `msg` partly rewritten) if the message is malformed.
+pub fn clamp_ttls(msg: &mut [u8], max: u32) -> bool {
+    if msg.len() < HEADER_LEN || msg.len() > MAX_DNS_MESSAGE {
+        return false;
+    }
+    let count = |i: usize| u16::from_be_bytes([msg[i], msg[i + 1]]) as usize;
+    let qd = count(4);
+    let rrs = count(6) + count(8) + count(10);
+    let mut pos = HEADER_LEN;
+    for _ in 0..qd.min(16) {
+        let Some((_, p)) = read_name(msg, pos) else {
+            return false;
+        };
+        pos = p + 4;
+        if pos > msg.len() {
+            return false;
+        }
+    }
+    for _ in 0..rrs.min(512) {
+        let Some((_, p)) = read_name(msg, pos) else {
+            return false;
+        };
+        let Some(h) = msg.get(p..p + 10) else {
+            return false;
+        };
+        let ty = u16::from_be_bytes([h[0], h[1]]);
+        let ttl = u32::from_be_bytes([h[4], h[5], h[6], h[7]]);
+        let rdlen = u16::from_be_bytes([h[8], h[9]]) as usize;
+        if p + 10 + rdlen > msg.len() {
+            return false;
+        }
+        if ty != 41 && ttl > max {
+            msg[p + 4..p + 8].copy_from_slice(&max.to_be_bytes());
+        }
+        pos = p + 10 + rdlen;
+    }
+    true
+}
+
 /// Build a response to `query` carrying `rcode` and no answers (NOERROR+empty = NODATA).
 pub fn build_empty_response(query: &[u8], rcode: u8) -> Option<Vec<u8>> {
     let q = parse_question(query)?;
@@ -518,6 +560,21 @@ mod tests {
             compare_answers(&[ip("10.0.0.1")], &[ip("10.0.0.1")]),
             PoisonVerdict::Bogus
         );
+    }
+
+    #[test]
+    fn clamp_ttls_rewrites_answers_but_not_edns() {
+        let q = build_query(7, "poisoned.example", TYPE_A).unwrap();
+        let mut r = build_response(&q, &["192.0.2.1".parse().unwrap()], 86_400);
+        // Append an OPT pseudo-record (root name, type 41, TTL field = flags).
+        r.extend_from_slice(&[0, 0, 41, 0x10, 0, 0x80, 0, 0, 0, 0, 0]);
+        let ar = u16::from_be_bytes([r[10], r[11]]) + 1;
+        r[10..12].copy_from_slice(&ar.to_be_bytes());
+        assert!(clamp_ttls(&mut r, 10));
+        assert_eq!(parse_answers(&r).unwrap().min_ttl, Some(10));
+        let n = r.len();
+        assert_eq!(&r[n - 6..n - 2], &[0x80, 0, 0, 0], "OPT flags untouched");
+        assert!(!clamp_ttls(&mut r[..14], 10));
     }
 
     #[test]

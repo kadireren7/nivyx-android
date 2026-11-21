@@ -1,8 +1,10 @@
-Nivyx Android 1.0.1, reliability patch.
+Nivyx Android 1.0.2, video and download reliability on filtered networks.
 
-* Fixed: pressing Start and Stop rapidly could leave the UI showing "Active" and the device without internet. Start, stop and restart are now executed by one serialized state machine (STOPPED, STARTING, RUNNING, STOPPING). Repeated or overlapping commands coalesce to the last requested state, and at most one VPN interface and one engine exist at any time.
-* Any failure while starting tears the interface and engine down and returns to Stopped.
-* Changing routes or excluded apps now restarts through the same state machine instead of a timed stop/start.
-* Refreshed the emerald/mint/teal Android theme across the Start/Stop screen, status ring, buttons and notification.
-* Physical-device verification of this build is recorded in docs/device-test-plan.md only after it has been done.
+* A direct connection now counts as working only if the server answers with a real TLS handshake. Forged replies (block pages, injected alerts) move on to the TLS record split.
+* Handshake works but the transfer freezes or is reset early (typical throttling of videos and large downloads): Nivyx now notices, marks direct as not working for that site, and the app's retry goes through the bypass.
+* New CDN host names under a domain that already needed bypass (video servers often use a new name for every request) go straight to the bypass, and QUIC to them is rejected so apps fall back to TCP.
+* New setting *Block all QUIC*, for networks that filter QUIC itself.
+* If DoH is unreachable and the network's own DNS answers, that answer is no longer cached and expires within 10 s, so a censored answer cannot stick once DoH works again. Backup addresses added for the default DoH providers.
+* Support bundle shows stalled direct flows, forged replies and plain-DNS fallbacks.
+* Tested with the local fake-DPI harness and unit tests. This build has not yet been physically tested on a device or a real filtered network (see docs/device-test-plan.md).
 * Verify downloads with `SHA256SUMS`; SBOM attached.

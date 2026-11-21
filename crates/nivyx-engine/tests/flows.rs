@@ -332,3 +332,142 @@ async fn non_tls_ports_connect_immediately_for_server_speaks_first_protocols() {
         .unwrap();
     assert_eq!(&banner, b"220 hello\r\n");
 }
+
+// ------------------------------------------------- forged replies, throttling, sibling hosts
+
+#[tokio::test(flavor = "multi_thread")]
+async fn injected_non_tls_reply_is_not_trusted_and_escalates() {
+    let dpi = dpi_server("blocked.example", Block::InjectReply).await;
+    let conn = TestConnector::new();
+    conn.set_default_tcp(dpi.addr);
+    let sh = shared_with(test_config(), conn, dummy_tls());
+    let mut app = open_flow(&sh, 443);
+    run_app(&mut app, &client_hello("blocked.example"), 1)
+        .await
+        .unwrap();
+    assert_eq!(state(&sh, "blocked.example"), State::TlsRecGood);
+    let s = sh.stats.snapshot();
+    assert_eq!(
+        (s.bogus_replies, s.escalations, s.connections_bypassed),
+        (1, 1, 1)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn non_tls_reply_on_the_last_strategy_still_reaches_the_app() {
+    let dpi = dpi_server("blocked.example", Block::InjectReply).await;
+    let conn = TestConnector::new();
+    conn.set_default_tcp(dpi.addr);
+    let mut cfg = test_config();
+    cfg.manual_rules = "blocked.example = direct".into();
+    let sh = shared_with(cfg, conn, dummy_tls());
+    let mut app = open_flow(&sh, 443);
+    app.write_all(&client_hello("blocked.example"))
+        .await
+        .unwrap();
+    let mut got = vec![0u8; INJECTED_REPLY.len()];
+    tokio::time::timeout(Duration::from_secs(5), app.read_exact(&mut got))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(got, INJECTED_REPLY);
+}
+
+fn stall_config() -> nivyx_core::config::Config {
+    let mut cfg = test_config();
+    cfg.stall_timeout_ms = 1000;
+    cfg
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn transfer_frozen_after_handshake_marks_direct_bad_and_next_flow_bypasses() {
+    let dpi = dpi_server("blocked.example", Block::FreezeAfterHello).await;
+    let conn = TestConnector::new();
+    conn.set_default_tcp(dpi.addr);
+    let sh = shared_with(stall_config(), conn, dummy_tls());
+
+    let mut app = open_flow(&sh, 443);
+    app.write_all(&client_hello("blocked.example"))
+        .await
+        .unwrap();
+    let mut hello = [0u8; 9];
+    app.read_exact(&mut hello).await.unwrap();
+    assert_eq!(
+        state(&sh, "blocked.example"),
+        State::DirectGood,
+        "handshake looked fine"
+    );
+    app.write_all(b"GET /video.mp4").await.unwrap();
+    tokio::time::sleep(Duration::from_millis(1600)).await;
+    assert_eq!(state(&sh, "blocked.example"), State::DirectBad);
+    assert_eq!(sh.stats.snapshot().direct_stalls, 1);
+
+    // The app's retry goes straight to the split hello and works.
+    let mut app2 = open_flow(&sh, 443);
+    run_app(&mut app2, &client_hello("blocked.example"), 1)
+        .await
+        .unwrap();
+    assert_eq!(state(&sh, "blocked.example"), State::TlsRecGood);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn reset_right_after_handshake_marks_direct_bad() {
+    let dpi = dpi_server("blocked.example", Block::ResetAfterHello).await;
+    let conn = TestConnector::new();
+    conn.set_default_tcp(dpi.addr);
+    let sh = shared_with(stall_config(), conn, dummy_tls());
+    let mut app = open_flow(&sh, 443);
+    app.write_all(&client_hello("blocked.example"))
+        .await
+        .unwrap();
+    let mut hello = [0u8; 9];
+    app.read_exact(&mut hello).await.unwrap();
+    app.write_all(b"GET /video.mp4").await.unwrap();
+    let mut rest = Vec::new();
+    let _ = tokio::time::timeout(Duration::from_secs(5), app.read_to_end(&mut rest)).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(state(&sh, "blocked.example"), State::DirectBad);
+    assert_eq!(sh.stats.snapshot().direct_stalls, 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn healthy_direct_flow_is_not_flagged_as_stalled() {
+    let dpi = dpi_server("blocked.example", Block::FreezeAfterHello).await;
+    let conn = TestConnector::new();
+    conn.set_default_tcp(dpi.addr);
+    let sh = shared_with(stall_config(), conn, dummy_tls());
+    let mut app = open_flow(&sh, 443);
+    run_app(&mut app, &client_hello("fine.example"), 1)
+        .await
+        .unwrap();
+    // Idle with nothing outstanding: no stall, however long it stays open.
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert_eq!(state(&sh, "fine.example"), State::DirectGood);
+    assert_eq!(sh.stats.snapshot().direct_stalls, 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn new_cdn_host_of_a_filtered_domain_skips_the_failing_direct_attempt() {
+    let dpi = dpi_server("videocdn.example", Block::Reset).await;
+    let conn = TestConnector::new();
+    conn.set_default_tcp(dpi.addr);
+    let sh = shared_with(test_config(), conn, dummy_tls());
+
+    let mut app = open_flow(&sh, 443);
+    run_app(&mut app, &client_hello("rr1---sn-a.videocdn.example"), 1)
+        .await
+        .unwrap();
+    assert_eq!(dpi.blocked.load(SeqCst), 1);
+
+    let mut app2 = open_flow(&sh, 443);
+    run_app(&mut app2, &client_hello("rr7---sn-b.videocdn.example"), 1)
+        .await
+        .unwrap();
+    assert_eq!(
+        dpi.blocked.load(SeqCst),
+        1,
+        "sibling went straight to the split hello"
+    );
+    assert_eq!(sh.stats.snapshot().escalations, 1);
+    assert_eq!(state(&sh, "rr7---sn-b.videocdn.example"), State::TlsRecGood);
+}

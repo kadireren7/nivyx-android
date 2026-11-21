@@ -68,6 +68,7 @@ exclusions and manual rules (`example.com = tlsrec`).
 
 ## Limits, stated plainly
 
+* Sites blocked by IP address, not by name, cannot be reached: there is no remote server to route around the block.
 * No ping (ICMP isn't forwarded).
 * Apps with their own DoH or strict Private DNS resolve outside Nivyx.
 * Android's *Always-on VPN + block without VPN* overrides fail-open.

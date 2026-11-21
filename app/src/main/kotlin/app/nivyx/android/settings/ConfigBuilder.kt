@@ -49,6 +49,7 @@ object ConfigBuilder {
             .put("manual_rules", settings.manualRules)
             .put("ipv6", settings.ipv6.wire)
             .put("quic_fallback", settings.quicFallback)
+            .put("block_all_quic", settings.blockAllQuic)
             .put("verbose_hosts", settings.verboseHosts)
             .put("salt", salt)
             .toString()

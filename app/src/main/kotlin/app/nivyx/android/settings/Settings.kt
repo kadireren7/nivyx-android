@@ -23,6 +23,7 @@ data class Settings(
     val customBootstrap: String = "",
     val ipv6: Ipv6Setting = Ipv6Setting.AUTO,
     val quicFallback: Boolean = true,
+    val blockAllQuic: Boolean = false,
     val tlsRecTcp: Boolean = false,
     val verboseHosts: Boolean = false,
     val debugLogs: Boolean = false,

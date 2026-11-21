@@ -12,10 +12,14 @@ use nivyx_core::strategy::{Family, Key, Source, Strategy};
 use nivyx_core::tls::{self, ClientHelloInfo, Parsed, SplitMode};
 use std::io;
 use std::net::SocketAddr;
+use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::Duration;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::TcpStream;
+use tokio::sync::Notify;
 
 const FIRST_FLIGHT_WAIT: Duration = Duration::from_secs(10);
 /// Per-direction relay buffer. Idle flows pay for this twice, so it is kept small (measured in docs/performance.md).
@@ -92,13 +96,16 @@ where
             .unwrap_or_else(|e| e.into_inner())
             .record(dst.ip(), sni, 300, now);
     }
-    let key = Key::new(&sh.salt(), cfg.network_id, Family::of(&dst.ip()), &host);
+    let salt = sh.salt();
+    let fam_v = Family::of(&dst.ip());
+    let key = Key::new(&salt, cfg.network_id, fam_v, &host);
+    let family = Key::family(&salt, cfg.network_id, fam_v, &host);
     let manual = sh.rules().lookup(&host);
     let decision = sh
         .strategy
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .decide(&key, manual, now);
+        .decide_scoped(&key, family.as_ref(), manual, now);
     let learn = decision.source != Source::Manual;
     if cfg.verbose_hosts {
         log::debug!(
@@ -107,16 +114,31 @@ where
             decision.source
         );
     }
+    let report = |strat: Strategy, ok: bool| {
+        if learn {
+            sh.strategy
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .report_scoped(key, family, strat, ok, sh.now());
+        }
+    };
+
+    // Only strategies that can actually be realised for this hello (e.g. splitting needs an SNI),
+    // so "last attempt" below is accurate. Plain direct is always possible and is the fail-open.
+    let mut plan: Vec<(Strategy, Vec<Vec<u8>>)> = decision
+        .ladder
+        .iter()
+        .filter_map(|s| chunks_for(*s, &buf, &handshake, &info).map(|c| (*s, c)))
+        .collect();
+    if plan.is_empty() {
+        plan.push((Strategy::Direct, vec![buf.clone()]));
+    }
 
     let mut pre = pre.ok();
     let mut last_err = io::Error::other("no strategy could be applied");
-    let n = decision.ladder.len();
-    for (i, strat) in decision.ladder.iter().copied().enumerate() {
+    let n = plan.len();
+    for (i, (strat, chunks)) in plan.into_iter().enumerate() {
         let last = i + 1 == n;
-        let Some(chunks) = chunks_for(strat, &buf, &handshake, &info) else {
-            // This strategy cannot be applied to this hello (e.g. no SNI): skip, don't learn.
-            continue;
-        };
         let mut up = match pre.take() {
             Some(s) => s,
             None => match sh.connector.tcp(dst, connect_timeout).await {
@@ -128,22 +150,38 @@ where
             },
         };
         let wait = Duration::from_millis(cfg.first_byte_timeout_ms);
-        let outcome = attempt(&mut up, &chunks, wait).await;
-        let report = |ok: bool| {
-            if learn {
-                sh.strategy
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .report(key, strat, ok, sh.now());
-            }
-        };
-        match outcome {
-            Attempt::Data(first_bytes) => {
-                report(true);
+        match attempt(&mut up, &chunks, wait).await {
+            Attempt::Data(first_bytes) if is_tls_reply(&first_bytes) => {
+                report(strat, true);
                 count_strategy(sh, strat);
                 app.write_all(&first_bytes).await?;
-                relay(sh, app, &mut up).await;
+                if strat == Strategy::Direct && learn {
+                    let stall = Duration::from_millis(cfg.stall_timeout_ms);
+                    relay_watched(sh, app, &mut up, stall, || {
+                        // The handshake got through but the transfer froze or was reset: classic
+                        // DPI throttling. The app's retry (and the rest of the domain) will bypass.
+                        inc(&sh.stats.direct_stalls);
+                        report(Strategy::Direct, false);
+                    })
+                    .await;
+                } else {
+                    relay(sh, app, &mut up).await;
+                }
                 return Ok(());
+            }
+            Attempt::Data(first_bytes) => {
+                // Not a TLS handshake record: a block page or alert injected by a middlebox, or a
+                // genuine server alert. Try the next strategy; on the last one hand it to the app.
+                inc(&sh.stats.bogus_replies);
+                if last {
+                    count_strategy(sh, strat);
+                    app.write_all(&first_bytes).await?;
+                    relay(sh, app, &mut up).await;
+                    return Ok(());
+                }
+                report(strat, false);
+                inc(&sh.stats.escalations);
+                last_err = io::Error::other("non-TLS reply to ClientHello");
             }
             Attempt::Slow if last => {
                 // Inconclusive and nothing left to try: keep this connection, learn nothing.
@@ -152,18 +190,28 @@ where
                 return Ok(());
             }
             Attempt::Slow => {
-                report(false);
+                report(strat, false);
                 inc(&sh.stats.escalations);
                 last_err = io::Error::new(io::ErrorKind::TimedOut, "no server response");
             }
             Attempt::Failed(e) => {
-                report(false);
+                report(strat, false);
                 inc(&sh.stats.escalations);
                 last_err = e;
             }
         }
     }
     Err(last_err)
+}
+
+/// A server's first bytes after a ClientHello are always a TLS handshake record
+/// (ServerHello or HelloRetryRequest). Anything else did not come from a working TLS server.
+pub fn is_tls_reply(b: &[u8]) -> bool {
+    match b {
+        [] => false,
+        [t] => *t == 0x16,
+        [t, v, ..] => *t == 0x16 && *v == 0x03,
+    }
 }
 
 fn count_strategy(sh: &Shared, s: Strategy) {
@@ -253,6 +301,146 @@ pub async fn read_first_flight<S: AsyncRead + Unpin>(app: &mut S) -> io::Result<
             Parsed::NeedMore => continue,
             p => return Ok((buf, p)),
         }
+    }
+}
+
+/// Server bytes after which a direct flow is considered past the point where DPI freezes it.
+pub const STALL_WATCH_BYTES: u64 = 64 * 1024;
+
+/// Upstream wrapper that records what the stall watcher needs. No timers of its own.
+struct Metered<'a, S> {
+    inner: &'a mut S,
+    m: &'a Meter,
+}
+
+struct Meter {
+    t0: tokio::time::Instant,
+    down: AtomicU64,
+    /// Milliseconds since `t0` of the app's latest write to the server.
+    last_up_ms: AtomicU64,
+    /// The app wrote and the server has not sent anything since.
+    pending: AtomicBool,
+    reset: AtomicBool,
+    wrote: Notify,
+}
+
+impl Meter {
+    fn ms(&self) -> u64 {
+        self.t0.elapsed().as_millis() as u64
+    }
+}
+
+fn is_reset(e: &io::Error) -> bool {
+    matches!(
+        e.kind(),
+        io::ErrorKind::ConnectionReset
+            | io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::BrokenPipe
+    )
+}
+
+impl<S: AsyncRead + Unpin> AsyncRead for Metered<'_, S> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let before = buf.filled().len();
+        let r = Pin::new(&mut *self.inner).poll_read(cx, buf);
+        match &r {
+            Poll::Ready(Ok(())) => {
+                let n = (buf.filled().len() - before) as u64;
+                if n > 0 {
+                    self.m.down.fetch_add(n, Relaxed);
+                    self.m.pending.store(false, Relaxed);
+                }
+            }
+            Poll::Ready(Err(e)) if is_reset(e) => self.m.reset.store(true, Relaxed),
+            _ => {}
+        }
+        r
+    }
+}
+
+impl<S: AsyncWrite + Unpin> AsyncWrite for Metered<'_, S> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        let r = Pin::new(&mut *self.inner).poll_write(cx, buf);
+        match &r {
+            Poll::Ready(Ok(n)) if *n > 0 => {
+                self.m.last_up_ms.store(self.m.ms(), Relaxed);
+                self.m.pending.store(true, Relaxed);
+                self.m.wrote.notify_one();
+            }
+            Poll::Ready(Err(e)) if is_reset(e) => self.m.reset.store(true, Relaxed),
+            _ => {}
+        }
+        r
+    }
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut *self.inner).poll_flush(cx)
+    }
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut *self.inner).poll_shutdown(cx)
+    }
+}
+
+/// Relay a direct flow and call `early_failure` (at most once, as soon as it is known) if the flow
+/// fails in a way that points at DPI: the server went silent for `stall` after the app wrote, or
+/// the connection was reset, all before [`STALL_WATCH_BYTES`] arrived. Event-driven: the watcher
+/// only wakes after app writes. The connection itself is left alone; only the learned decision
+/// changes, so the app's retry takes the bypass path.
+async fn relay_watched<A>(
+    sh: &Shared,
+    app: &mut A,
+    up: &mut TcpStream,
+    stall: Duration,
+    early_failure: impl FnOnce(),
+) where
+    A: AsyncRead + AsyncWrite + Unpin,
+{
+    let m = Meter {
+        t0: tokio::time::Instant::now(),
+        down: AtomicU64::new(0),
+        last_up_ms: AtomicU64::new(0),
+        pending: AtomicBool::new(false),
+        reset: AtomicBool::new(false),
+        wrote: Notify::new(),
+    };
+    let stall_ms = stall.as_millis() as u64;
+    let watcher = async {
+        loop {
+            if m.down.load(Relaxed) >= STALL_WATCH_BYTES {
+                return std::future::pending::<()>().await;
+            }
+            if m.pending.load(Relaxed) {
+                let due = m.last_up_ms.load(Relaxed) + stall_ms;
+                if m.ms() >= due {
+                    return;
+                }
+                tokio::time::sleep_until(m.t0 + Duration::from_millis(due)).await;
+            } else {
+                m.wrote.notified().await;
+            }
+        }
+    };
+    let mut wrapped = Metered { inner: up, m: &m };
+    let relay_fut = relay(sh, app, &mut wrapped);
+    tokio::pin!(relay_fut);
+    tokio::pin!(watcher);
+    let stalled = tokio::select! {
+        _ = &mut relay_fut => false,
+        _ = &mut watcher => true,
+    };
+    if stalled {
+        early_failure();
+        // Keep relaying: the decision is what changes, not this connection.
+        relay_fut.await;
+    } else if m.reset.load(Relaxed) && m.down.load(Relaxed) < STALL_WATCH_BYTES {
+        early_failure();
     }
 }
 

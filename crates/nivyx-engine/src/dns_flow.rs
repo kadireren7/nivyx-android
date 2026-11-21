@@ -14,6 +14,8 @@ use tokio::sync::Mutex;
 
 const DOH_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(3500);
 const SYSTEM_TIMEOUT: Duration = Duration::from_millis(3000);
+/// Longest TTL handed out for an answer that came from the network's resolver instead of DoH.
+pub const FALLBACK_TTL: u32 = 10;
 
 /// Answer one wire-format DNS query. Always returns a response (SERVFAIL on total failure).
 pub async fn resolve(sh: &Arc<Shared>, query: &[u8]) -> Option<Vec<u8>> {
@@ -44,11 +46,13 @@ pub async fn resolve(sh: &Arc<Shared>, query: &[u8]) -> Option<Vec<u8>> {
     if cfg.encrypted_dns && !local {
         resp = doh_failover(sh, &cfg.resolvers, query).await;
     }
+    let mut fallback = false;
     if resp.is_none() {
         // Local names, encrypted DNS disabled, or every DoH resolver failed: fail open to the
         // network's own resolver so a broken DoH path never means no DNS at all.
         resp = system_query(sh, &cfg.system_dns, query).await;
         if cfg.encrypted_dns && !local && resp.is_some() {
+            fallback = true;
             log::debug!("DoH unavailable; answered via system resolver");
         }
     }
@@ -57,6 +61,14 @@ pub async fn resolve(sh: &Arc<Shared>, query: &[u8]) -> Option<Vec<u8>> {
         return dns::build_empty_response(query, 2); // SERVFAIL
     };
     dns::set_id(&mut resp, q.id);
+    if fallback {
+        // The network's resolver is exactly what censors poison (block-page addresses, fake
+        // NXDOMAIN). Use its answer now, but never cache it here and keep the OS and apps from
+        // holding it, so the real answer is fetched over DoH as soon as DoH works again.
+        inc(&sh.stats.dns_fallback_answers);
+        dns::clamp_ttls(&mut resp, FALLBACK_TTL);
+        return Some(resp);
+    }
     if !local {
         sh.dns_cache
             .lock()

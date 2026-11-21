@@ -124,6 +124,20 @@ pub enum Block {
     Reset,
     /// Silently stop answering.
     Blackhole,
+    /// Answer the hello with a forged non-TLS reply (block page), then close.
+    InjectReply,
+    /// Let the handshake through, then freeze the transfer (throttling DPI).
+    FreezeAfterHello,
+    /// Let the handshake through, then reset the connection on the next client data.
+    ResetAfterHello,
+}
+
+pub const INJECTED_REPLY: &[u8] = b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n";
+
+fn hard_reset(sock: TcpStream) {
+    let std_sock = sock.into_std().unwrap();
+    let _ = socket2::SockRef::from(&std_sock).set_linger(Some(Duration::ZERO));
+    drop(std_sock);
 }
 
 pub struct Dpi {
@@ -177,11 +191,22 @@ pub async fn dpi_server(blocked_host: &'static str, mode: Block) -> Dpi {
                 if mode != Block::None && first.windows(host.len()).any(|w| w == host) {
                     b.fetch_add(1, SeqCst);
                     match mode {
-                        Block::Reset => {
-                            let std_sock = sock.into_std().unwrap();
-                            let _ =
-                                socket2::SockRef::from(&std_sock).set_linger(Some(Duration::ZERO));
-                            drop(std_sock);
+                        Block::Reset => hard_reset(sock),
+                        Block::InjectReply => {
+                            let _ = sock.write_all(INJECTED_REPLY).await;
+                        }
+                        Block::FreezeAfterHello | Block::ResetAfterHello => {
+                            if sock.write_all(&SERVER_HELLO).await.is_err() {
+                                return;
+                            }
+                            let mut sink = [0u8; 64];
+                            if mode == Block::ResetAfterHello {
+                                if matches!(sock.read(&mut sink).await, Ok(n) if n > 0) {
+                                    hard_reset(sock);
+                                }
+                                return;
+                            }
+                            while matches!(sock.read(&mut sink).await, Ok(n) if n > 0) {}
                         }
                         _ => {
                             let mut sink = [0u8; 64];

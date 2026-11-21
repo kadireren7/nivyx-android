@@ -427,3 +427,104 @@ async fn tcp_dns_framing_is_supported() {
         vec![ip("192.0.2.4")]
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn quic_to_a_fresh_cdn_host_is_rejected_when_a_sibling_needs_bypass() {
+    let pki = pki();
+    let doh = fake_doh(
+        &pki,
+        "p",
+        vec![
+            ("rr1---sn-a.videocdn.example", vec![ip("198.51.100.20")]),
+            ("rr9---sn-z.videocdn.example", vec![ip("198.51.100.21")]),
+            ("fine.example", vec![ip("198.51.100.22")]),
+        ],
+    )
+    .await;
+    let mut cfg = test_config();
+    cfg.resolvers = vec![doh.resolver.clone()];
+    let sh = shared_with(cfg, TestConnector::new(), pki.client.clone());
+    for n in [
+        "rr1---sn-a.videocdn.example",
+        "rr9---sn-z.videocdn.example",
+        "fine.example",
+    ] {
+        resolve(&sh, &query(n, TYPE_A)).await.unwrap();
+    }
+    let d = |a: &str| SocketAddr::new(ip(a), 443);
+    assert!(!should_reject_quic(
+        &sh,
+        &d("198.51.100.21"),
+        &quic_initial()
+    ));
+    let h = "rr1---sn-a.videocdn.example";
+    let k = Key::new(&sh.salt(), 1, Family::V4, h);
+    let f = Key::family(&sh.salt(), 1, Family::V4, h);
+    sh.strategy
+        .lock()
+        .unwrap()
+        .report_scoped(k, f, Strategy::Direct, false, sh.now());
+    assert!(
+        should_reject_quic(&sh, &d("198.51.100.21"), &quic_initial()),
+        "never-seen sibling host inherits the domain's need for bypass"
+    );
+    assert!(!should_reject_quic(
+        &sh,
+        &d("198.51.100.22"),
+        &quic_initial()
+    ));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn block_all_quic_rejects_every_initial_but_not_other_udp() {
+    let mut cfg = test_config();
+    cfg.block_all_quic = true;
+    let sh = shared_with(cfg, TestConnector::new(), dummy_tls());
+    let unknown = SocketAddr::new(ip("198.51.100.99"), 443);
+    assert!(should_reject_quic(&sh, &unknown, &quic_initial()));
+    assert!(should_reject_quic(
+        &sh,
+        &SocketAddr::new(ip("198.51.100.99"), 8443),
+        &quic_initial()
+    ));
+    assert!(!should_reject_quic(&sh, &unknown, b"not quic"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fallback_answers_from_the_network_resolver_are_short_lived_and_not_cached() {
+    let pki = pki();
+    let doh = fake_doh(
+        &pki,
+        "down",
+        vec![("blocked.example", vec![ip("192.0.2.80")])],
+    )
+    .await;
+    doh.mode.store(DOH_HTTP_503, SeqCst);
+    // The ISP resolver "poisons" the name with a block-page address.
+    let (plain, hits) = fake_plain_dns(vec![("blocked.example", vec![ip("192.0.2.66")])]).await;
+    let conn = TestConnector::new();
+    conn.map_udp(SocketAddr::new(ip("127.0.0.53"), 53), plain);
+    let mut cfg = test_config();
+    cfg.resolvers = vec![doh.resolver.clone()];
+    cfg.system_dns = vec![ip("127.0.0.53")];
+    let sh = shared_with(cfg, conn, pki.client.clone());
+
+    let r = resolve(&sh, &query("blocked.example", TYPE_A))
+        .await
+        .unwrap();
+    let a = dns::parse_answers(&r).unwrap();
+    assert_eq!(a.addrs, vec![ip("192.0.2.66")]);
+    assert!(a.min_ttl.unwrap() <= nivyx_engine::dns_flow::FALLBACK_TTL);
+    assert_eq!(sh.stats.snapshot().dns_fallback_answers, 1);
+
+    // DoH recovers: the real answer is used at once, the poisoned one was never cached.
+    doh.mode.store(DOH_HEALTHY, SeqCst);
+    let r = resolve(&sh, &query("blocked.example", TYPE_A))
+        .await
+        .unwrap();
+    assert_eq!(
+        dns::parse_answers(&r).unwrap().addrs,
+        vec![ip("192.0.2.80")]
+    );
+    assert_eq!(hits.load(SeqCst), 1);
+}

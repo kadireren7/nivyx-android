@@ -39,18 +39,20 @@ object SupportBundle {
             if (st != null) {
                 appendLine(
                     "DNS: ${if (st.dnsEncrypted) "encrypted" else "system"}, " +
-                        "${if (st.dnsHealthy) "healthy" else "degraded"}, queries ${st.dnsQueries}, failures ${st.dnsFailures}",
+                        "${if (st.dnsHealthy) "healthy" else "degraded"}, queries ${st.dnsQueries}, failures ${st.dnsFailures}, " +
+                        "plain-DNS fallbacks ${st.dnsFallbackAnswers}",
                 )
                 appendLine(
                     "Connections: total ${st.connectionsTotal}, direct ${st.connectionsDirect}, bypassed ${st.connectionsBypassed}, " +
-                        "failed ${st.connectionsFailed}, escalations ${st.escalations}, QUIC rejected ${st.quicRejected}",
+                        "failed ${st.connectionsFailed}, escalations ${st.escalations}, QUIC rejected ${st.quicRejected}, " +
+                        "stalled direct ${st.directStalls}, forged replies ${st.bogusReplies}",
                 )
                 appendLine("Learned scopes: ${st.strategySummary.entries.joinToString { "${it.key}=${it.value}" }.ifEmpty { "none" }}")
             }
             appendLine()
             appendLine("Config summary")
             appendLine("  resolver: ${s.resolver}")
-            appendLine("  ipv6: ${s.ipv6}, quic fallback: ${s.quicFallback}, tlsrec-tcp: ${s.tlsRecTcp}")
+            appendLine("  ipv6: ${s.ipv6}, quic fallback: ${s.quicFallback}, block all quic: ${s.blockAllQuic}, tlsrec-tcp: ${s.tlsRecTcp}")
             appendLine("  manual rules: ${s.manualRules.lines().count { it.isNotBlank() && !it.trim().startsWith("#") }}")
             appendLine("  excluded apps: ${s.excludedPackages.size}")
             appendLine("  start on boot: ${s.startOnBoot}, auto-start: ${s.autoStartOnLaunch}")
